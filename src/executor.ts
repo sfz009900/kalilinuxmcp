@@ -1,6 +1,8 @@
 import { NodeSSH } from 'node-ssh';
+import * as ssh2 from 'ssh2';
 import * as fs from 'fs';
 import { log } from './index.js';
+import { EventEmitter } from 'events';
 
 /**
  * 移除ANSI转义序列
@@ -11,10 +13,22 @@ function stripAnsiCodes(str: string): string {
   return str.replace(/\x1B\[\d+m|\x1B\[\d+;\d+m|\x1B\[\d+;\d+;\d+m/g, '');
 }
 
-// SSH执行器，使用node-ssh库
+// 定义交互式会话事件类型
+export interface InteractiveSession extends EventEmitter {
+  stdin: NodeJS.WritableStream;
+  stdout: string;
+  stderr: string;
+  sessionId: string;
+  write(data: string): void;
+  close(): void;
+}
+
+// SSH执行器，使用node-ssh库和ssh2
 export class CommandExecutor {
   private ssh: NodeSSH = new NodeSSH();
+  private sshClient: ssh2.Client | null = null;
   public isConnected: boolean = false;
+  private sessions: Map<string, InteractiveSession> = new Map();
   
   constructor() {}
 
@@ -63,6 +77,26 @@ export class CommandExecutor {
       
       // 连接到服务器
       await this.ssh.connect(sshConfig);
+      
+      // 同时准备ssh2客户端供交互式会话使用
+      this.sshClient = new ssh2.Client();
+      
+      await new Promise<void>((resolve, reject) => {
+        this.sshClient!.on('ready', () => {
+          log.info('SSH2交互式客户端准备就绪');
+          resolve();
+        }).on('error', (err) => {
+          log.error('SSH2交互式客户端错误:', err);
+          reject(err);
+        }).connect({
+          host,
+          port,
+          username,
+          privateKey: privateKeyPath ? fs.readFileSync(privateKeyPath, 'utf8') : undefined,
+          password: password
+        });
+      });
+      
       this.isConnected = true;
       log.info('SSH连接成功');
     } catch (error) {
@@ -133,11 +167,136 @@ export class CommandExecutor {
   }
 
   /**
+   * 创建交互式命令会话
+   * 返回可用于交互式输入的会话
+   */
+  async createInteractiveSession(
+    command: string,
+    options: {
+      cwd?: string;
+      env?: Record<string, string>;
+    } = {}
+  ): Promise<InteractiveSession> {
+    if (!this.isConnected || !this.sshClient) {
+      throw new Error('SSH未连接，请先调用connect方法');
+    }
+    
+    const { cwd = '/', env = {} } = options;
+    
+    try {
+      log.info(`创建交互式会话: ${command}`);
+      
+      // 创建环境变量设置
+      const envSettings = Object.entries(env)
+        .map(([key, value]) => `export ${key}="${String(value).replace(/"/g, '\\"')}"`)
+        .join('; ');
+      
+      // 最终命令
+      const finalCommand = envSettings 
+        ? `cd "${cwd}" && ${envSettings} && ${command}`
+        : `cd "${cwd}" && ${command}`;
+        
+      const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+      
+      // 创建一个会话对象
+      const session = new EventEmitter() as InteractiveSession;
+      session.stdout = '';
+      session.stderr = '';
+      session.sessionId = sessionId;
+      
+      // 设置session的close方法
+      session.close = () => {
+        if (this.sessions.has(sessionId)) {
+          // 实际会话清理在ssh2回调中处理
+          session.emit('closing');
+          this.sessions.delete(sessionId);
+        }
+      };
+      
+      await new Promise<void>((resolve, reject) => {
+        this.sshClient!.exec(finalCommand, { pty: true }, (err, stream) => {
+          if (err) {
+            log.error(`创建交互式会话错误: ${err.message}`);
+            reject(err);
+            return;
+          }
+          
+          // 设置输入流
+          session.stdin = stream;
+          
+          // 设置write方法简化输入
+          session.write = (data: string) => {
+            log.debug(`[会话 ${sessionId}] 发送输入: ${data}`);
+            stream.write(data);
+          };
+          
+          // 处理输出流
+          stream.on('data', (data: Buffer) => {
+            const output = data.toString();
+            session.stdout += output;
+            log.debug(`[会话 ${sessionId}] 输出: ${output.trim()}`);
+            session.emit('output', output);
+          });
+          
+          // 处理错误流
+          stream.stderr.on('data', (data: Buffer) => {
+            const error = data.toString();
+            session.stderr += error;
+            log.debug(`[会话 ${sessionId}] 错误: ${error.trim()}`);
+            session.emit('stderr', error);
+          });
+          
+          // 处理会话关闭
+          stream.on('close', () => {
+            log.info(`[会话 ${sessionId}] 会话关闭`);
+            this.sessions.delete(sessionId);
+            session.emit('close');
+          });
+          
+          // 处理错误
+          stream.on('error', (err: Error) => {
+            log.error(`[会话 ${sessionId}] 会话错误: ${err.message}`);
+            session.emit('error', err);
+          });
+          
+          // 关闭时清理流
+          session.on('closing', () => {
+            stream.end();
+          });
+          
+          // 会话创建成功
+          this.sessions.set(sessionId, session);
+          resolve();
+        });
+      });
+      
+      log.info(`交互式会话创建成功，ID: ${sessionId}`);
+      return session;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error(`创建交互式会话失败: ${errorMessage}`);
+      throw error;
+    }
+  }
+
+  /**
    * 断开SSH连接
    */
   async disconnect(): Promise<void> {
+    // 先关闭所有活跃会话
+    for (const [sessionId, session] of this.sessions.entries()) {
+      log.info(`关闭会话: ${sessionId}`);
+      session.close();
+    }
+    
+    if (this.sshClient) {
+      log.info('断开SSH2客户端连接');
+      this.sshClient.end();
+      this.sshClient = null;
+    }
+    
     if (this.isConnected) {
-      log.info('断开SSH连接');
+      log.info('断开NodeSSH连接');
       this.ssh.dispose();
       this.isConnected = false;
     }

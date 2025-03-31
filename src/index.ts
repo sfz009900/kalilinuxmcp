@@ -9,7 +9,7 @@ import {
   McpError,
   CallToolRequest
 } from "@modelcontextprotocol/sdk/types.js";
-import { CommandExecutor } from "./executor.js";
+import { CommandExecutor, InteractiveSession } from "./executor.js";
 
 // 启用调试模式
 process.env.DEBUG = 'true';
@@ -42,6 +42,9 @@ const KALI_CONFIG = {
 
 const commandExecutor = new CommandExecutor();
 
+// 存储活跃的交互式会话
+const activeSessions: Map<string, InteractiveSession> = new Map();
+
 // 创建服务器
 function createServer() {
   const server = new Server(
@@ -61,7 +64,7 @@ function createServer() {
       tools: [
         {
           name: "execute_command",
-          description: "在Kali Linux渗透测试环境中执行命令。支持所有Kali Linux内置的安全测试工具和常规Linux命令。",
+          description: "(无需交互式比如ping 127.0.0.1)在Kali Linux渗透测试环境中执行命令。支持所有Kali Linux内置的安全测试工具和常规Linux命令。",
           inputSchema: {
             type: "object",
             properties: {
@@ -72,6 +75,70 @@ function createServer() {
             },
             required: ["command"]
           }
+        },
+        {
+          name: "start_interactive_command",
+          description: "(需要交互式比如mysql -u root -p)在Kali Linux环境中启动一个交互式命令，并返回会话ID。交互式命令可以接收用户输入。",
+          inputSchema: {
+            type: "object",
+            properties: {
+              command: {
+                type: "string",
+                description: "要在Kali Linux环境中执行的交互式命令。"
+              }
+            },
+            required: ["command"]
+          }
+        },
+        {
+          name: "send_input_to_command",
+          description: "向正在运行的交互式命令发送用户输入。",
+          inputSchema: {
+            type: "object",
+            properties: {
+              session_id: {
+                type: "string",
+                description: "交互式会话ID。"
+              },
+              input: {
+                type: "string",
+                description: "发送给命令的输入文本。"
+              },
+              end_line: {
+                type: "boolean",
+                description: "是否在输入后添加换行符。默认为true。"
+              }
+            },
+            required: ["session_id", "input"]
+          }
+        },
+        {
+          name: "get_command_output",
+          description: "获取交互式命令的最新输出。",
+          inputSchema: {
+            type: "object",
+            properties: {
+              session_id: {
+                type: "string",
+                description: "交互式会话ID。"
+              }
+            },
+            required: ["session_id"]
+          }
+        },
+        {
+          name: "close_interactive_command",
+          description: "关闭交互式命令会话。",
+          inputSchema: {
+            type: "object", 
+            properties: {
+              session_id: {
+                type: "string",
+                description: "交互式会话ID。"
+              }
+            },
+            required: ["session_id"]
+          }
         }
       ]
     };
@@ -79,68 +146,216 @@ function createServer() {
 
   server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
     try {
-      if (request.params.name !== "execute_command") {
-        throw new McpError(ErrorCode.MethodNotFound, "未知工具");
+      const toolName = request.params.name;
+      
+      // 确保已连接
+      if (!commandExecutor.isConnected) {
+        await commandExecutor.connect({
+          host: KALI_CONFIG.host,
+          port: KALI_CONFIG.port,
+          username: KALI_CONFIG.username,
+          privateKeyPath: KALI_CONFIG.privateKeyPath
+        });
       }
       
-      const command = String(request.params.arguments?.command);
-      if (!command) {
-        throw new McpError(ErrorCode.InvalidParams, "命令是必需的");
-      }
-      const env = {};
-      const timeout = 30000000;
+      // 根据工具名称处理不同的请求
+      switch (toolName) {
+        // 执行非交互式命令
+        case "execute_command": {
+          const command = String(request.params.arguments?.command);
+          if (!command) {
+            throw new McpError(ErrorCode.InvalidParams, "命令是必需的");
+          }
+          const env = {};
+          const timeout = 30000000;
 
-      try {
-        // 详细记录请求信息
-        log.info(`准备执行命令: ${command}`);
-        log.debug(`连接配置: host=${KALI_CONFIG.host}, port=${KALI_CONFIG.port}, user=${KALI_CONFIG.username}`);
-        log.debug(`命令超时设置: ${timeout}毫秒`);
-        
-        // 确保已连接
-        if (!commandExecutor.isConnected) {
-          await commandExecutor.connect({
-            host: KALI_CONFIG.host,
-            port: KALI_CONFIG.port,
-            username: KALI_CONFIG.username,
-            privateKeyPath: KALI_CONFIG.privateKeyPath
-          });
-        }
-
-        // 执行命令
-        const result = await commandExecutor.executeCommand(command, {
-          timeout: timeout,
-          env: env as Record<string, string>
-        });
-        
-        log.info("命令执行成功");
-        
-        return {
-          content: [{
-            type: "text",
-            text: `命令输出:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`
-          }]
-        };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const errorStack = error instanceof Error && error.stack ? error.stack : "无堆栈信息";
-        
-        log.error(`SSH命令执行失败: ${errorMessage}`);
-        log.debug(`错误堆栈: ${errorStack}`);
-        
-        // 提供友好的错误提示
-        let errorDetails = errorMessage;
-        if (errorMessage.includes('ECONNREFUSED')) {
-          errorDetails = `SSH连接被拒绝 (端口${KALI_CONFIG.port}): 请确认SSH服务正在运行。您可以在系统中运行: sudo service ssh start`;
-        } else if (errorMessage.includes('authentication')) {
-          errorDetails = `SSH认证失败: 用户名(${KALI_CONFIG.username})或私钥不正确`;
-        } else if (errorMessage.includes('timeout') || errorMessage.includes('超时')) {
-          errorDetails = `命令执行或连接超时: 请确认命令是否需要更长的时间来执行`;
+          try {
+            log.info(`准备执行命令: ${command}`);
+            
+            // 执行命令
+            const result = await commandExecutor.executeCommand(command, {
+              timeout: timeout,
+              env: env as Record<string, string>
+            });
+            
+            log.info("命令执行成功");
+            
+            return {
+              content: [{
+                type: "text",
+                text: `命令输出:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`
+              }]
+            };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            log.error(`命令执行失败: ${errorMessage}`);
+            throw new McpError(
+              ErrorCode.InternalError,
+              `无法执行Kali Linux命令: ${errorMessage}`
+            );
+          }
         }
         
-        throw new McpError(
-          ErrorCode.InternalError,
-          `无法执行Kali Linux命令: ${errorDetails}`
-        );
+        // 启动交互式命令
+        case "start_interactive_command": {
+          const command = String(request.params.arguments?.command);
+          if (!command) {
+            throw new McpError(ErrorCode.InvalidParams, "命令是必需的");
+          }
+          
+          try {
+            log.info(`准备启动交互式命令: ${command}`);
+            
+            // 创建交互式会话
+            const session = await commandExecutor.createInteractiveSession(command);
+            activeSessions.set(session.sessionId, session);
+            
+            // 等待初始输出
+            const initialOutput = await new Promise<string>((resolve) => {
+              setTimeout(() => {
+                resolve(session.stdout);
+              }, 500); // 等待500ms以收集初始输出
+            });
+            
+            log.info(`交互式会话已创建，ID: ${session.sessionId}`);
+            
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  status: "success",
+                  session_id: session.sessionId,
+                  initial_output: initialOutput
+                })
+              }]
+            };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            log.error(`创建交互式会话失败: ${errorMessage}`);
+            throw new McpError(
+              ErrorCode.InternalError,
+              `无法创建交互式会话: ${errorMessage}`
+            );
+          }
+        }
+        
+        // 向命令发送输入
+        case "send_input_to_command": {
+          const sessionId = String(request.params.arguments?.session_id);
+          const input = String(request.params.arguments?.input);
+          const endLine = request.params.arguments?.end_line !== false; // 默认为true
+          
+          if (!sessionId || input === undefined) {
+            throw new McpError(ErrorCode.InvalidParams, "会话ID和输入是必需的");
+          }
+          
+          const session = activeSessions.get(sessionId);
+          if (!session) {
+            throw new McpError(ErrorCode.InvalidParams, `找不到会话ID: ${sessionId}`);
+          }
+          
+          try {
+            log.info(`向会话 ${sessionId} 发送输入: ${input}`);
+            
+            // 记录输入前的输出长度
+            const beforeLength = session.stdout.length;
+            
+            // 发送输入，根据需要添加换行符
+            session.write(endLine ? `${input}\n` : input);
+            
+            // 等待新输出
+            const newOutput = await new Promise<string>((resolve) => {
+              setTimeout(() => {
+                const newText = session.stdout.substring(beforeLength);
+                resolve(newText);
+              }, 500); // 等待500ms以收集新输出
+            });
+            
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  status: "success",
+                  new_output: newOutput
+                })
+              }]
+            };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            log.error(`向会话发送输入失败: ${errorMessage}`);
+            throw new McpError(
+              ErrorCode.InternalError,
+              `无法发送输入到会话: ${errorMessage}`
+            );
+          }
+        }
+        
+        // 获取命令输出
+        case "get_command_output": {
+          const sessionId = String(request.params.arguments?.session_id);
+          
+          if (!sessionId) {
+            throw new McpError(ErrorCode.InvalidParams, "会话ID是必需的");
+          }
+          
+          const session = activeSessions.get(sessionId);
+          if (!session) {
+            throw new McpError(ErrorCode.InvalidParams, `找不到会话ID: ${sessionId}`);
+          }
+          
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                status: "success",
+                stdout: session.stdout,
+                stderr: session.stderr
+              })
+            }]
+          };
+        }
+        
+        // 关闭交互式命令
+        case "close_interactive_command": {
+          const sessionId = String(request.params.arguments?.session_id);
+          
+          if (!sessionId) {
+            throw new McpError(ErrorCode.InvalidParams, "会话ID是必需的");
+          }
+          
+          const session = activeSessions.get(sessionId);
+          if (!session) {
+            throw new McpError(ErrorCode.InvalidParams, `找不到会话ID: ${sessionId}`);
+          }
+          
+          try {
+            log.info(`关闭会话 ${sessionId}`);
+            session.close();
+            activeSessions.delete(sessionId);
+            
+            return {
+              content: [{
+                type: "text",
+                text: JSON.stringify({
+                  status: "success",
+                  message: "会话已关闭",
+                  final_stdout: session.stdout,
+                  final_stderr: session.stderr
+                })
+              }]
+            };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            log.error(`关闭会话失败: ${errorMessage}`);
+            throw new McpError(
+              ErrorCode.InternalError,
+              `无法关闭会话: ${errorMessage}`
+            );
+          }
+        }
+        
+        default:
+          throw new McpError(ErrorCode.MethodNotFound, "未知工具");
       }
     } catch (error) {
       if (error instanceof McpError) {
@@ -208,6 +423,11 @@ async function main() {
     // 处理进程退出
     process.on('SIGINT', async () => {
       log.info("关闭服务器...");
+      // 关闭所有活跃会话
+      for (const [sessionId, session] of activeSessions.entries()) {
+        log.info(`关闭会话 ${sessionId}`);
+        session.close();
+      }
       await commandExecutor.disconnect();
       process.exit(0);
     });
