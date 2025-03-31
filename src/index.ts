@@ -206,18 +206,16 @@ function createServer() {
           try {
             log.info(`准备启动交互式命令: ${command}`);
             
-            // 创建交互式会话
-            const session = await commandExecutor.createInteractiveSession(command);
-            activeSessions.set(session.sessionId, session);
-            
-            // 等待初始输出
-            const initialOutput = await new Promise<string>((resolve) => {
-              setTimeout(() => {
-                resolve(session.stdout);
-              }, 500); // 等待500ms以收集初始输出
+            // 创建交互式会话 - 使用waitForPrompt=true等待提示符
+            const session = await commandExecutor.createInteractiveSession(command, {
+              waitForPrompt: true,    // 等待提示符后再返回
+              maxWaitTime: 30000      // 最多等待30秒
             });
             
-            log.info(`交互式会话已创建，ID: ${session.sessionId}`);
+            activeSessions.set(session.sessionId, session);
+            
+            log.info(`交互式会话已创建并等待提示符，ID: ${session.sessionId}`);
+            log.info(`命令输出: ${session.stdout}`);
             
             return {
               content: [{
@@ -225,7 +223,8 @@ function createServer() {
                 text: JSON.stringify({
                   status: "success",
                   session_id: session.sessionId,
-                  initial_output: initialOutput
+                  initial_output: session.stdout,
+                  waiting_for_input: session.isWaitingForInput
                 })
               }]
             };
@@ -263,12 +262,38 @@ function createServer() {
             // 发送输入，根据需要添加换行符
             session.write(endLine ? `${input}\n` : input);
             
-            // 等待新输出
-            const newOutput = await new Promise<string>((resolve) => {
+            // 等待新输出或新的输入提示符
+            const newOutput = await new Promise<{ output: string; waitingForInput: boolean }>((resolve) => {
+              // 创建一个等待输入状态变化的处理器
+              const inputStateHandler = (waiting: boolean) => {
+                const newText = session.stdout.substring(beforeLength);
+                resolve({ output: newText, waitingForInput: waiting });
+              };
+              
+              // 先等待1秒，看是否有新输出
               setTimeout(() => {
                 const newText = session.stdout.substring(beforeLength);
-                resolve(newText);
-              }, 500); // 等待500ms以收集新输出
+                
+                if (newText.length > 0) {
+                  // 有新输出，检查是否在等待输入
+                  resolve({ output: newText, waitingForInput: session.isWaitingForInput });
+                  return;
+                }
+                
+                // 如果没有新输出，开始监听输入状态变化
+                session.once('input-state-change', inputStateHandler);
+                
+                // 再次等待2秒
+                setTimeout(() => {
+                  // 移除监听器
+                  session.removeListener('input-state-change', inputStateHandler);
+                  // 无论如何返回当前状态
+                  resolve({ 
+                    output: session.stdout.substring(beforeLength),
+                    waitingForInput: session.isWaitingForInput
+                  });
+                }, 2000);
+              }, 1000);
             });
             
             return {
@@ -276,7 +301,8 @@ function createServer() {
                 type: "text",
                 text: JSON.stringify({
                   status: "success",
-                  new_output: newOutput
+                  new_output: newOutput.output,
+                  waiting_for_input: newOutput.waitingForInput
                 })
               }]
             };
@@ -303,13 +329,31 @@ function createServer() {
             throw new McpError(ErrorCode.InvalidParams, `找不到会话ID: ${sessionId}`);
           }
           
+          // 增加上次获取输出的时间记录
+          if (!(session as any).lastOutputFetch) {
+            (session as any).lastOutputFetch = 0;
+            (session as any).lastOutputLength = 0;
+          }
+          
+          // 检查是否有新输出
+          const now = Date.now();
+          const timeSinceLastFetch = now - (session as any).lastOutputFetch;
+          const hasNewOutput = session.stdout.length > (session as any).lastOutputLength;
+          
+          // 更新获取时间和长度
+          (session as any).lastOutputFetch = now;
+          (session as any).lastOutputLength = session.stdout.length;
+          
           return {
             content: [{
               type: "text",
               text: JSON.stringify({
                 status: "success",
                 stdout: session.stdout,
-                stderr: session.stderr
+                stderr: session.stderr,
+                has_new_output: hasNewOutput,
+                time_since_last_fetch_ms: timeSinceLastFetch,
+                waiting_for_input: session.isWaitingForInput
               })
             }]
           };

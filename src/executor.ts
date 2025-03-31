@@ -13,12 +13,71 @@ function stripAnsiCodes(str: string): string {
   return str.replace(/\x1B\[\d+m|\x1B\[\d+;\d+m|\x1B\[\d+;\d+;\d+m/g, '');
 }
 
+/**
+ * 检测输出是否在等待用户输入
+ * 通过检查输出中的常见提示符和特定模式来判断
+ */
+function isWaitingForInput(output: string): boolean {
+  if (!output || output.trim() === '') {
+    return false;
+  }
+
+  // 检查常见的命令行提示符
+  const lines = output.split('\n');
+  // 获取最后20行非空文本，某些程序可能会有很长的输出
+  const lastLines = lines.filter(line => line.trim().length > 0).slice(-20);
+  const lastLine = lastLines.length > 0 ? lastLines[lastLines.length - 1] : '';
+  const cleanLine = stripAnsiCodes(lastLine.trim());
+  
+  // 检查是否包含msfconsole的启动文本
+  const isMsfconsole = output.includes('Metasploit Framework') || 
+                       output.includes('msf') || 
+                       output.includes('Call trans opt:');
+
+  // 在日志中记录最后几行，帮助调试
+  log.debug(`检测输入提示符，最后一行: "${cleanLine}"`);
+  if (isMsfconsole) {
+    log.debug(`检测到可能是msfconsole，输出前100个字符: "${output.substring(0, 100)}"`);
+  }
+  
+  // 常见的提示符模式
+  const promptPatterns = [
+    /[\$#>]\s*$/,              // 常见的shell提示符: $, #, > 
+    /password[: ]*$/i,         // 密码提示
+    /continue\? \[(y\/n)\]/i,  // 继续提示
+    /\[\?\]\s*$/,              // 问号提示
+    /输入.*[:：]/,              // 中文输入提示
+    /please enter.*:/i,        // 英文输入提示
+    /press.*to continue/i,     // 按键继续提示
+    /Enter\s*.*:/i,            // Enter提示
+    /\(.*\)\s*$/,              // 括号内选择提示，如 (Y/n)
+    /\s+y\/n\s*$/i,            // y/n选择
+    /msf[56]?\s*>\s*$/,       // msf提示符，支持msf、msf5、msf6等
+    /mysql>\s*$/,              // mysql提示符
+    /sqlite>\s*$/,             // sqlite提示符
+    /ftp>\s*$/,                // ftp提示符
+    /postgres=#\s*$/,          // postgres提示符
+    /Press RETURN to continue/, // 按回车继续
+    /waiting for input/i        // 通用等待输入文本
+  ];
+  
+  // msfconsole特殊处理 - 如果输出包含Metasploit相关内容，并且有一段时间没有更新
+  if (isMsfconsole) {
+    // 对于msfconsole，如果输出包含特定文本并且最近没有新数据，很可能是在等待输入
+    return true;
+  }
+  
+  // 检查最后一行是否匹配任何提示符模式
+  return promptPatterns.some(pattern => pattern.test(cleanLine));
+}
+
 // 定义交互式会话事件类型
 export interface InteractiveSession extends EventEmitter {
   stdin: NodeJS.WritableStream;
   stdout: string;
   stderr: string;
   sessionId: string;
+  isWaitingForInput: boolean;
   write(data: string): void;
   close(): void;
 }
@@ -175,108 +234,272 @@ export class CommandExecutor {
     options: {
       cwd?: string;
       env?: Record<string, string>;
+      waitForPrompt?: boolean; // 是否等待提示符后再返回
+      maxWaitTime?: number;    // 最大等待时间(毫秒)
     } = {}
   ): Promise<InteractiveSession> {
     if (!this.isConnected || !this.sshClient) {
       throw new Error('SSH未连接，请先调用connect方法');
     }
     
-    const { cwd = '/', env = {} } = options;
+    const { 
+      cwd = '/', 
+      env = {}, 
+      waitForPrompt = true, 
+      maxWaitTime = 30000 // 默认最大等待30秒
+    } = options;
     
     try {
       log.info(`创建交互式会话: ${command}`);
       
       // 创建环境变量设置
-      const envSettings = Object.entries(env)
+      let envSettings = Object.entries(env)
         .map(([key, value]) => `export ${key}="${String(value).replace(/"/g, '\\"')}"`)
         .join('; ');
       
+      // 为交互式终端添加必要的环境变量
+      const defaultEnvSettings = [
+        'export TERM=xterm-256color',
+        'export COLUMNS=80',
+        'export LINES=24',
+        'export PS1="\\u@\\h:\\w\\$ "'
+      ].join('; ');
+      
+      envSettings = envSettings ? `${envSettings}; ${defaultEnvSettings}` : defaultEnvSettings;
+      
+      // 特殊命令处理
+      let processedCommand = command;
+      
+      // 对于msfconsole等命令，添加特殊处理
+      if (command.includes('msfconsole')) {
+        log.info('检测到msfconsole命令，添加特殊处理');
+        // 不再添加version命令，让它自然启动并等待真正的提示符
+        processedCommand = `${command} -q`; // 仅使用安静模式
+      }
+      
       // 最终命令
-      const finalCommand = envSettings 
-        ? `cd "${cwd}" && ${envSettings} && ${command}`
-        : `cd "${cwd}" && ${command}`;
-        
+      const finalCommand = `cd "${cwd}" && ${envSettings} && ${processedCommand}`;
+      
+      // 创建会话并配置
       const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
-      
-      // 创建一个会话对象
-      const session = new EventEmitter() as InteractiveSession;
-      session.stdout = '';
-      session.stderr = '';
-      session.sessionId = sessionId;
-      
-      // 设置session的close方法
-      session.close = () => {
-        if (this.sessions.has(sessionId)) {
-          // 实际会话清理在ssh2回调中处理
-          session.emit('closing');
-          this.sessions.delete(sessionId);
-        }
-      };
-      
-      await new Promise<void>((resolve, reject) => {
-        this.sshClient!.exec(finalCommand, { pty: true }, (err, stream) => {
-          if (err) {
-            log.error(`创建交互式会话错误: ${err.message}`);
-            reject(err);
-            return;
-          }
-          
-          // 设置输入流
-          session.stdin = stream;
-          
-          // 设置write方法简化输入
-          session.write = (data: string) => {
-            log.debug(`[会话 ${sessionId}] 发送输入: ${data}`);
-            stream.write(data);
-          };
-          
-          // 处理输出流
-          stream.on('data', (data: Buffer) => {
-            const output = data.toString();
-            session.stdout += output;
-            log.debug(`[会话 ${sessionId}] 输出: ${output.trim()}`);
-            session.emit('output', output);
-          });
-          
-          // 处理错误流
-          stream.stderr.on('data', (data: Buffer) => {
-            const error = data.toString();
-            session.stderr += error;
-            log.debug(`[会话 ${sessionId}] 错误: ${error.trim()}`);
-            session.emit('stderr', error);
-          });
-          
-          // 处理会话关闭
-          stream.on('close', () => {
-            log.info(`[会话 ${sessionId}] 会话关闭`);
-            this.sessions.delete(sessionId);
-            session.emit('close');
-          });
-          
-          // 处理错误
-          stream.on('error', (err: Error) => {
-            log.error(`[会话 ${sessionId}] 会话错误: ${err.message}`);
-            session.emit('error', err);
-          });
-          
-          // 关闭时清理流
-          session.on('closing', () => {
-            stream.end();
-          });
-          
-          // 会话创建成功
-          this.sessions.set(sessionId, session);
-          resolve();
-        });
-      });
+      const session = await this.createSessionObject(sessionId, finalCommand);
       
       log.info(`交互式会话创建成功，ID: ${sessionId}`);
+      
+      // 如果需要等待提示符出现
+      if (waitForPrompt) {
+        return await this.waitForSessionPrompt(session, command, maxWaitTime);
+      }
+      
       return session;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error(`创建交互式会话失败: ${errorMessage}`);
       throw error;
     }
+  }
+  
+  /**
+   * 创建会话对象并配置事件处理
+   * @private
+   */
+  private async createSessionObject(sessionId: string, finalCommand: string): Promise<InteractiveSession> {
+    // 创建一个会话对象
+    const session = new EventEmitter() as InteractiveSession;
+    session.stdout = '';
+    session.stderr = '';
+    session.sessionId = sessionId;
+    session.isWaitingForInput = false;
+    
+    // 设置session的close方法
+    session.close = () => {
+      if (this.sessions.has(sessionId)) {
+        // 实际会话清理在ssh2回调中处理
+        session.emit('closing');
+        this.sessions.delete(sessionId);
+      }
+    };
+    
+    await new Promise<void>((resolve, reject) => {
+      // 使用默认选项，只保留pty: true
+      this.sshClient!.exec(finalCommand, { 
+        pty: true
+      }, (err, stream) => {
+        if (err) {
+          log.error(`创建交互式会话错误: ${err.message}`);
+          reject(err);
+          return;
+        }
+        
+        // 设置输入流
+        session.stdin = stream;
+        
+        // 设置write方法简化输入
+        session.write = (data: string) => {
+          log.debug(`[会话 ${sessionId}] 发送输入: ${data}`);
+          stream.write(data);
+        };
+        
+        // 检查是否等待输入的标志
+        let checkInputTimer: NodeJS.Timeout | null = null;
+        
+        // 定时检查是否等待输入
+        const checkIfWaitingForInput = () => {
+          // 检查输出是否在等待用户输入
+          const waiting = isWaitingForInput(session.stdout);
+          
+          // 如果状态改变，发出事件
+          if (waiting !== session.isWaitingForInput) {
+            session.isWaitingForInput = waiting;
+            session.emit('input-state-change', waiting);
+            
+            if (waiting) {
+              session.emit('waiting-for-input', session.stdout);
+              log.debug(`[会话 ${sessionId}] 检测到命令等待用户输入`);
+            }
+          }
+          
+          // 继续检查
+          checkInputTimer = setTimeout(checkIfWaitingForInput, 100);
+        };
+        
+        // 开始检查是否等待输入
+        checkIfWaitingForInput();
+        
+        // 处理输出流 - 使用更可靠的数据处理
+        stream.on('data', (data: Buffer) => {
+          const output = data.toString();
+          session.stdout += output;
+          
+          // 对msfconsole启动时的大量输出进行处理
+          // 不记录太大的输出块，避免日志过多
+          if (output.length < 100) {
+            log.debug(`[会话 ${sessionId}] 输出: ${output.trim()}`);
+          } else {
+            log.debug(`[会话 ${sessionId}] 输出较长: 长度=${output.length}, 前50个字符: ${output.substring(0, 50).trim()}...`);
+          }
+          
+          session.emit('output', output);
+          
+          // 立即检查是否等待输入
+          const waiting = isWaitingForInput(session.stdout);
+          if (waiting !== session.isWaitingForInput) {
+            session.isWaitingForInput = waiting;
+            log.debug(`[会话 ${sessionId}] 输入状态变化: ${waiting ? '等待输入' : '不等待输入'}`);
+            session.emit('input-state-change', waiting);
+            
+            if (waiting) {
+              session.emit('waiting-for-input', session.stdout);
+              log.info(`[会话 ${sessionId}] 检测到命令等待用户输入`);
+            }
+          }
+        });
+        
+        // 处理错误流
+        stream.stderr.on('data', (data: Buffer) => {
+          const error = data.toString();
+          session.stderr += error;
+          log.debug(`[会话 ${sessionId}] 错误: ${error.trim()}`);
+          session.emit('stderr', error);
+        });
+        
+        // 处理会话关闭
+        stream.on('close', () => {
+          log.info(`[会话 ${sessionId}] 会话关闭`);
+          if (checkInputTimer) {
+            clearTimeout(checkInputTimer);
+          }
+          this.sessions.delete(sessionId);
+          session.emit('close');
+        });
+        
+        // 处理错误
+        stream.on('error', (err: Error) => {
+          log.error(`[会话 ${sessionId}] 会话错误: ${err.message}`);
+          session.emit('error', err);
+        });
+        
+        // 关闭时清理流
+        session.on('closing', () => {
+          if (checkInputTimer) {
+            clearTimeout(checkInputTimer);
+          }
+          stream.end();
+        });
+        
+        // 会话创建成功
+        this.sessions.set(sessionId, session);
+        resolve();
+      });
+    });
+    
+    return session;
+  }
+  
+  /**
+   * 等待会话出现输入提示符
+   * @private
+   */
+  private async waitForSessionPrompt(
+    session: InteractiveSession, 
+    command: string, 
+    maxWaitTime: number
+  ): Promise<InteractiveSession> {
+    return new Promise<InteractiveSession>((resolve, reject) => {
+      // 对于慢启动的命令设置更长的等待时间，但不再主动发送回车
+      const actualMaxWaitTime = command.includes('msfconsole') ? maxWaitTime * 3 : maxWaitTime;
+      
+      const timeoutId = setTimeout(() => {
+        log.info(`会话 ${session.sessionId} 等待提示符超时，直接返回`);
+        
+        // 对于特定的命令，尝试看最后一行是否可以被当作提示符
+        if (command.includes('msfconsole')) {
+          // 检查输出中是否包含任何Metasploit相关文本
+          const hasMetasploitOutput = session.stdout.includes('Metasploit') || 
+                                     session.stdout.includes('msf') ||
+                                     session.stdout.includes('exploit');
+          
+          if (hasMetasploitOutput) {
+            // 如果有Metasploit相关的输出，认为它在等待输入
+            session.isWaitingForInput = true;
+            log.info('检测到msfconsole有输出，认为它在等待输入');
+          }
+        }
+        
+        resolve(session);
+      }, actualMaxWaitTime);
+      
+      // 等待输入状态变化
+      const waitForInputHandler = () => {
+        clearTimeout(timeoutId);
+        log.info(`会话 ${session.sessionId} 已准备好接收输入`);
+        resolve(session);
+      };
+      
+      // 如果已经在等待输入，直接返回
+      if (session.isWaitingForInput) {
+        clearTimeout(timeoutId);
+        resolve(session);
+        return;
+      }
+      
+      // 添加等待输入事件处理
+      session.once('waiting-for-input', waitForInputHandler);
+      
+      // 添加错误处理
+      session.once('error', (err) => {
+        clearTimeout(timeoutId);
+        session.removeListener('waiting-for-input', waitForInputHandler);
+        reject(err);
+      });
+      
+      // 添加关闭处理
+      session.once('close', () => {
+        clearTimeout(timeoutId);
+        session.removeListener('waiting-for-input', waitForInputHandler);
+        resolve(session); // 会话已关闭，直接返回
+      });
+    });
   }
 
   /**
