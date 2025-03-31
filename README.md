@@ -14,13 +14,14 @@ kali linux mcp,pentest,penetration test
 
 # 3:原始使用的"booyaabes/kali-linux-full"镜像,但是里面软件版本有点老,自行选择是否要执行以下操作更新(主要需要更新很久!)
 
-1:进入docker容器后执行:
-1:wget -q -O - https://archive.kali.org/archive-key.asc | gpg --import
-2:curl -fsSL https://archive.kali.org/archive-key.asc | sudo gpg --dearmor -o /usr/share/keyrings/kali-archive-keyring.gpg
-3:sudo apt update && sudo apt full-upgrade -y
-4:(下载更新最新版kali linux的所有工具,注意很大很慢)sudo apt install kali-linux-everything -y
-5:如果只需更新单独的软件,就无需执行4因为要很久,例如sudo apt install wpscan
-6:我自己倒是完成了最新更新,但是容器太大了几十G就不传了,需要的自行操作就行了
+```1:进入docker容器后执行:
+1:wget -q -O - https://archive.kali.org/archive-key.asc | gpg --import 
+2:curl -fsSL https://archive.kali.org/archive-key.asc | sudo gpg --dearmor -o /usr/share/keyrings/kali-archive-keyring.gpg 
+3:sudo apt update && sudo apt full-upgrade -y 
+4:(下载更新最新版kali linux的所有工具,注意很大很慢)sudo apt install kali-linux-everything -y 
+5:如果只需更新单独的软件,就无需执行4因为要很久,例如sudo apt install wpscan 
+6:我自己倒是完成了最新更新,但是容器太大了几十G就不传了,需要的自行操作就行了```
+```
 
 # 4:(编译MCP),先npm install后直接npm run build,得到build目录,核心是index.js
 
@@ -78,4 +79,5 @@ kali linux mcp,pentest,penetration test
 ![image](https://github.com/user-attachments/assets/fa3d0ccc-7000-481a-92a9-f1a6f2370bc1)
 
 ![image](https://github.com/user-attachments/assets/5d7c2678-a168-43f6-943a-8fb978d3f2c8)
+
 
