@@ -48,7 +48,9 @@ kali linux mcp,pentest,penetration test
 
 > https://github.com/weidwonder/terminal-mcp-server
 
-# Lab: Blind SQL injection with out-of-band data exfiltration
+# 效果展示:
+
+# 1:Lab: Blind SQL injection with out-of-band data exfiltration
 
 ![image](https://github.com/user-attachments/assets/a16a30f4-e699-4c89-ae2f-f8cc8dda4905)
 
@@ -58,7 +60,7 @@ kali linux mcp,pentest,penetration test
 
 ![image](https://github.com/user-attachments/assets/7cc362dc-c94c-499c-a272-1130ccf35b1b)
 
-# command injection:
+# 2:command injection:
 
 ![image](https://github.com/user-attachments/assets/f1e75047-5c83-4206-95a4-28ce9fe82427)
 
@@ -68,7 +70,7 @@ kali linux mcp,pentest,penetration test
 
 ![image](https://github.com/user-attachments/assets/221acee6-297e-481b-813c-077bcc2df25b)
 
-# Lab: Web shell upload via Content-Type restriction bypass
+# 3:Lab: Web shell upload via Content-Type restriction bypass
 
 ![image](https://github.com/user-attachments/assets/fcf30b5b-48b2-4cf9-a56a-e81277134942)
 
