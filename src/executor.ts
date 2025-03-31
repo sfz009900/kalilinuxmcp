@@ -25,22 +25,25 @@ function isWaitingForInput(output: string): boolean {
     return false;
   }
 
+  // 首先移除所有ANSI转义序列，确保检查的是纯文本内容
+  const cleanOutput = stripAnsiCodes(output);
+  
   // 检查常见的命令行提示符
-  const lines = output.split('\n');
+  const lines = cleanOutput.split('\n');
   // 获取最后20行非空文本，某些程序可能会有很长的输出
   const lastLines = lines.filter(line => line.trim().length > 0).slice(-20);
   const lastLine = lastLines.length > 0 ? lastLines[lastLines.length - 1] : '';
-  const cleanLine = stripAnsiCodes(lastLine.trim());
+  const cleanLine = lastLine.trim();
   
   // 检查是否包含msfconsole的启动文本
-  const isMsfconsole = output.includes('Metasploit Framework') || 
-                       output.includes('msf') || 
-                       output.includes('Call trans opt:');
+  const isMsfconsole = cleanOutput.includes('Metasploit Framework') || 
+                       cleanOutput.includes('msf') || 
+                       cleanOutput.includes('Call trans opt:');
 
   // 在日志中记录最后几行，帮助调试
   log.debug(`检测输入提示符，最后一行: "${cleanLine}"`);
   if (isMsfconsole) {
-    log.debug(`检测到可能是msfconsole，输出前100个字符: "${output.substring(0, 100)}"`);
+    log.debug(`检测到可能是msfconsole，输出前100个字符: "${cleanOutput.substring(0, 100)}"`);
   }
   
   // 常见的提示符模式
@@ -372,7 +375,9 @@ export class CommandExecutor {
         // 处理输出流 - 使用更可靠的数据处理
         stream.on('data', (data: Buffer) => {
           const output = data.toString();
-          session.stdout += output;
+          // 添加ANSI转义序列过滤
+          const cleanOutput = stripAnsiCodes(output);
+          session.stdout += cleanOutput;
           
           // 对msfconsole启动时的大量输出进行处理
           // 不记录太大的输出块，避免日志过多
@@ -382,7 +387,7 @@ export class CommandExecutor {
             log.debug(`[会话 ${sessionId}] 输出较长: 长度=${output.length}, 前50个字符: ${output.substring(0, 50).trim()}...`);
           }
           
-          session.emit('output', output);
+          session.emit('output', cleanOutput);
           
           // 立即检查是否等待输入
           const waiting = isWaitingForInput(session.stdout);
@@ -401,9 +406,11 @@ export class CommandExecutor {
         // 处理错误流
         stream.stderr.on('data', (data: Buffer) => {
           const error = data.toString();
-          session.stderr += error;
-          log.debug(`[会话 ${sessionId}] 错误: ${error.trim()}`);
-          session.emit('stderr', error);
+          // 添加ANSI转义序列过滤
+          const cleanError = stripAnsiCodes(error);
+          session.stderr += cleanError;
+          log.debug(`[会话 ${sessionId}] 错误: ${cleanError.trim()}`);
+          session.emit('stderr', cleanError);
         });
         
         // 处理会话关闭
