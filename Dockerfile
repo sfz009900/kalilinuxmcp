@@ -121,4 +121,4 @@ CMD ["/root/start.sh"]
 
 # 注意：此容器需要以特权模式运行，否则iptables无法正常工作
 # 使用以下命令启动容器:
-# docker run --name kali-container -d --privileged -p 2222:22 kali-proxy
+# docker run --name kali-container -d --privileged -p 2222:22 kali-pentest-mcp
