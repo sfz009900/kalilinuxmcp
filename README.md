@@ -27,9 +27,10 @@ kali linux mcp,pentest,penetration test
 
 # 5:(编译Docker镜像),
 
+```
 1:编译镜像:"docker build -t kali-pentest-mcp ."
 2:部署镜像:"docker run --name kali-container -d --privileged -p 2222:22 kali-pentest-mcp"
-
+```
 # 6:安装MCP:
 
 ```
