@@ -92,7 +92,7 @@ function createServer() {
         },
         {
           name: "send_input_to_command",
-          description: "向正在运行的交互式命令发送用户输入。",
+          description: "(自行判断是AI输入还是用户手动输入)向正在运行的交互式命令发送用户输入。",
           inputSchema: {
             type: "object",
             properties: {
