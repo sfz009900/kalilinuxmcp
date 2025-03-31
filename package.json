@@ -1,0 +1,30 @@
+{
+  "name": "kali-pentest-mcp-server",
+  "version": "0.1.0",
+  "description": "Kali Linux渗透测试环境MCP服务器，支持所有Kali Linux安全测试工具",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "kali-pentest-mcp-server": "./build/index.js"
+  },
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "prepare": "npm run build",
+    "watch": "tsc --watch",
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "start": "node build/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.0",
+    "node-ssh": "^13.2.1",
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "@types/ssh2": "^1.15.4",
+    "typescript": "^5.3.3"
+  }
+}
