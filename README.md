@@ -4,6 +4,13 @@
 
 kali linux mcp,pentest,penetration test
 
+# 更新:
+20250401更新: 新增简单的交互式处理
+![image](https://github.com/user-attachments/assets/45d7c2f5-2228-4e2b-9a1c-a8e74a4fa82c)
+![image](https://github.com/user-attachments/assets/832a4ef4-d393-4636-8e15-8b165e337d5b)
+![image](https://github.com/user-attachments/assets/0e74d4ee-ceca-48d2-869a-efe93097b303)
+
+
 # 如何安装:
 
 # 1: 首先要用ssh-keygen -t rsa做一个私钥和公钥,替换公钥到Dockerfile的,替换私钥到"C:\Users\[Username]\.ssh\\kali000",这里自行去src\index.ts里搜索"kali000"替换路径
