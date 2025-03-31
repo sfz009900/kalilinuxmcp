@@ -1,4 +1,4 @@
-Hang on, gotta get everything organized before I post it! 😜
+目前只是个玩具,只支持执行可以返回的命令,如burp suite和metasploit等不能进行界面和命令交互,metasploit倒是可以叫ai agent直接执行不进入命令交互模式,有时间弄得的哥们可以拿去加强一下 😜
 
 # kalilinuxmcp
 
