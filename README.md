@@ -6,7 +6,7 @@ kali linux mcp,pentest,penetration test
 
 # 如何安装:
 
-# 1: 首先要用ssh-keygen -t rsa做一个私钥和公钥,替换公钥到Dockerfile的
+# 1: 首先要用ssh-keygen -t rsa做一个私钥和公钥,替换公钥到Dockerfile的,替换私钥到"C:\Users\[Username]\.ssh\\kali000",这里自行去src\index.ts里搜索"kali000"替换路径
 
 `'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCsoJo7WJIHDQgmEdKwm6IqS61xaGWa/OVVMCrMwcVh13xvYbAD7wdMufzNhWRxSso3SKvTHbQjIszvYQgkVFjRPiJW5vGCU0847CX0zZytGLnKpKWDZ5ccShMPlIxVuy2+WUQlKNL7f+w59PMX+3BLcikhtwk0xwG7tpS4kAtXHlrwt1B1vFj3CoF8rBofGJAahOuPvruRh9i1i73i5JJHJFeDdJVfNnY5/8HnBvtWtJzbsbmlyaTODfrDCeYZ32zxDZdsPVEls3RDsfgUadyC71mpXloJ8JTiUU37H5DY+xtIuz3XICwA7DsVm9jiKaSR96DZyogYxx+UKdrDsIH4JQwBNs3RDCX+t7ivKj75KkhhrW2X2h90EOjwQPQOhuVU2FtMXbWlfbZL5UwXGgA7Efe3N0ZzrKac+RGM6vY/jsnESgZaTayF/N/BysMpjI18xy6Y12CyPXVYsvF3v04d2XR1Fs5rduERjpot7o9N+i5FcoTfUb5WP5nVU9X0b2s= hack004@DESKTOP-H4HRI73'`
 
