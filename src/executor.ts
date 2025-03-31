@@ -9,8 +9,11 @@ import { EventEmitter } from 'events';
  * 这些序列用于终端颜色和格式化,但在API输出中不需要
  */
 function stripAnsiCodes(str: string): string {
-  // 匹配所有ANSI转义序列
-  return str.replace(/\x1B\[\d+m|\x1B\[\d+;\d+m|\x1B\[\d+;\d+;\d+m/g, '');
+  // 更完整的ANSI转义序列匹配模式
+  return str.replace(
+    /(\x1B\[[0-9;]*[a-zA-Z])|(\x1B\].*?\x07)|(\x1B\[\?[0-9;]*[a-zA-Z])|(\x1B\[[0-9]+[a-zA-Z])/g,
+    ''
+  );
 }
 
 /**
