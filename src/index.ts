@@ -382,24 +382,29 @@ function createServer() {
           // 增加上次获取输出的时间记录
           if (!(session as any).lastOutputFetch) {
             (session as any).lastOutputFetch = 0;
-            (session as any).lastOutputLength = 0;
           }
           
-          // 检查是否有新输出
+          // 初始化lastOutputPosition(如果还没有的话)
+          if (!(session as any).lastOutputPosition) {
+            (session as any).lastOutputPosition = 0;
+          }
+
+          // 获取新输出
+          const newOutput = session.stdout.substring((session as any).lastOutputPosition);
+          const hasNewOutput = newOutput.length > 0;
+          
+          // 更新获取时间和位置
           const now = Date.now();
           const timeSinceLastFetch = now - (session as any).lastOutputFetch;
-          const hasNewOutput = session.stdout.length > (session as any).lastOutputLength;
-          
-          // 更新获取时间和长度
           (session as any).lastOutputFetch = now;
-          (session as any).lastOutputLength = session.stdout.length;
+          (session as any).lastOutputPosition = session.stdout.length;
           
           return {
             content: [{
               type: "text",
               text: JSON.stringify({
                 status: "success",
-                stdout: session.stdout,
+                stdout: stripAnsiCodes(newOutput), // 只返回新的输出
                 stderr: session.stderr,
                 has_new_output: hasNewOutput,
                 time_since_last_fetch_ms: timeSinceLastFetch,
