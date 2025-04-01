@@ -9,7 +9,7 @@ import {
   McpError,
   CallToolRequest
 } from "@modelcontextprotocol/sdk/types.js";
-import { CommandExecutor, InteractiveSession } from "./executor.js";
+import { CommandExecutor, InteractiveSession, stripAnsiCodes } from "./executor.js";
 
 // 启用调试模式
 process.env.DEBUG = 'true';
@@ -324,7 +324,7 @@ function createServer() {
                 type: "text",
                 text: JSON.stringify({
                   status: "success",
-                  new_output: newOutput.output,
+                  new_output: stripAnsiCodes(newOutput.output),
                   waiting_for_input: newOutput.waitingForInput
                 })
               }]
