@@ -10,14 +10,18 @@ import { ClientChannel, ConnectConfig, ExecOptions } from 'ssh2';
  * 这些序列用于终端颜色和格式化,但在API输出中不需要
  */
 export function stripAnsiCodes(str: string): string {
+  if (!str) return '';
+  
   // 先移除所有零值字符（\u0000）和其他控制字符
   const strWithoutControlChars = str.replace(/[\x00-\x08\x0B-\x1F]/g, '');
   
-  // 再移除ANSI转义序列
-  return strWithoutControlChars.replace(
-    /(\x1B\[[0-9;]*[a-zA-Z])|(\x1B\].*?\x07)|(\x1B\[\?[0-9;]*[a-zA-Z])|(\x1B\[[0-9]+[a-zA-Z])/g,
-    ''
-  );
+  // 使用更简单但更强大的正则表达式捕获所有ANSI转义序列
+  // 包括方括号中的格式控制码
+  return strWithoutControlChars
+    // 先移除标准ANSI转义序列
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-9?;]*[0-9A-Za-z])/g, '')
+    // 再移除单独出现的控制序列（如[0m, [4m等）
+    .replace(/\[[0-9]+m/g, '');
 }
 
 /**
