@@ -15,13 +15,23 @@ export function stripAnsiCodes(str: string): string {
   // 先移除所有零值字符（\u0000）和其他控制字符
   const strWithoutControlChars = str.replace(/[\x00-\x08\x0B-\x1F]/g, '');
   
-  // 使用更简单但更强大的正则表达式捕获所有ANSI转义序列
-  // 包括方括号中的格式控制码
-  return strWithoutControlChars
-    // 先移除标准ANSI转义序列
+  // 分步处理不同类型的ANSI序列和控制码
+  let result = strWithoutControlChars
+    // 移除标准ANSI转义序列
     .replace(/\x1B(?:[@-Z\\-_]|\[[0-9?;]*[0-9A-Za-z])/g, '')
-    // 再移除单独出现的控制序列（如[0m, [4m等）
-    .replace(/\[[0-9]+m/g, '');
+    // 移除括号B开头的控制序列 (B[0;7m(B[m 等
+    .replace(/\(B\[[0-9;]*m/g, '')
+    // 移除单纯的(B序列
+    .replace(/\(B/g, '')
+    // 移除[?数字h格式的序列 [?2004h 等
+    .replace(/\[\?[0-9]+[a-z]/g, '')
+    // 移除单独出现的控制序列（如[0m, [4m等）
+    .replace(/\[[0-9;]+m/g, '');
+  
+  // 处理可能遗漏的其他特殊序列
+  result = result.replace(/\[[0-9;]*[A-Za-z]/g, '');  // 任何剩余的 [数字字母 序列
+  
+  return result;
 }
 
 /**
