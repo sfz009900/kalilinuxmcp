@@ -71,14 +71,46 @@ function isWaitingForInput(output: string): boolean {
   
   // msfconsole特殊处理
   if (isMsfconsole) {
-    // log.debug(`检测到可能是msfconsole，最后一行: "${cleanLine}", 输出前100个字符: "${cleanOutput.substring(0, 100)}"`);
-    
-    // 对于msfconsole，只检测"msf6 >"
-    if (cleanLine.includes('msf6') || cleanLine.trim() === 'msf6') {
-      // log.debug('检测到msfconsole提示符 msf6 >，判定为等待输入');
-      return true;
+    // 使用静态变量跟踪用户输入状态
+    if (!(global as any).msfInputState) {
+      (global as any).msfInputState = {
+        hasReturnedTrue: false,   // 是否曾经返回过true
+        hasUserInput: false,      // 用户是否输入过命令
+        outputLength: 0           // 输出长度记录
+      };
     }
-    // 如果是msfconsole但没有匹配到上面的特殊情况，则返回false
+
+    // 检查是否是第一次（从未返回过true）
+    const isFirstTime = !((global as any).msfInputState.hasReturnedTrue);
+    const isMsf6Prompt = isFirstTime 
+      ? /^msf6\s>$/.test(cleanLine.trim())  // 第一次：严格匹配"msf6 >"
+      : /^msf6\s.+>$/.test(cleanLine.trim()); // 之后：要求"msf6"和">"之间有其他内容
+    
+    // 检测用户是否输入了新命令
+    // 只有当输出长度增加时才认为是新输入
+    if (cleanOutput.length > (global as any).msfInputState.outputLength) {
+      // 如果输出增加了，说明有新的用户输入
+      if ((global as any).msfInputState.hasReturnedTrue) {
+        (global as any).msfInputState.hasUserInput = true;
+      }
+      (global as any).msfInputState.outputLength = cleanOutput.length;
+    }
+    
+    if (isMsf6Prompt) {
+      // 第一次检测到提示符
+      if (!((global as any).msfInputState.hasReturnedTrue)) {
+        (global as any).msfInputState.hasReturnedTrue = true;
+        (global as any).msfInputState.outputLength = cleanOutput.length;
+        return true;
+      }
+      // 已经返回过true，并且用户已经输入过命令
+      else if ((global as any).msfInputState.hasUserInput) {
+        (global as any).msfInputState.hasUserInput = false;  // 重置用户输入状态
+        (global as any).msfInputState.outputLength = cleanOutput.length;  // 更新输出长度
+        return true;
+      }
+    }
+    
     return false;
   }
   else {
