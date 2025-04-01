@@ -215,7 +215,7 @@ function createServer() {
             // 显式设置pty选项，特别是对msfconsole这类特殊终端程序
             const ptyOptions = {
               waitForPrompt: true,    // 等待提示符后再返回
-              maxWaitTime: command.includes('msfconsole') ? 120000 : 30000,   // msfconsole等待更长时间(2分钟)，其他命令30秒
+              maxWaitTime: command.includes('msfconsole') ? 3000000 : 30000,   // msfconsole等待更长时间(2分钟)，其他命令30秒
               forcePty: command.includes('msfconsole'), // 为msfconsole强制分配PTY
               term: "xterm-256color",  // 设置终端类型
               cols: 100,               // 设置列数
@@ -243,21 +243,6 @@ function createServer() {
               waiting_for_input: session.isWaitingForInput
             };
             
-            // 如果是msfconsole，根据实际情况添加特殊提示
-            if (command.includes('msfconsole')) {
-              // 检测是否输出中已经包含msf>提示符
-              const hasMsfPrompt = /msf\d*\s*>\s*$/m.test(session.stdout.trim());
-              
-              // 标记这是msf会话，便于客户端识别
-              responseMessage.msf_specific = true;
-              
-              // 只有在没有检测到msf>提示符时才显示警告消息
-              if (!hasMsfPrompt) {
-                responseMessage.msf_message = "msfconsole可能需要额外时间启动。如果当前没有交互提示符，请使用get_command_output检查最新状态。";
-              }
-            }
-            
-            log.info(`实时输出内容 (${session.stdout.length} 字节):\n${session.stdout.substring(0, 500)}${session.stdout.length > 500 ? '...(更多输出已省略)' : ''}`);
             log.info(`输入状态: ${session.isWaitingForInput ? '等待输入' : '不等待输入'}`);
             
             return {
