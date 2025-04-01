@@ -209,7 +209,7 @@ function createServer() {
             // 创建交互式会话 - 使用waitForPrompt=true等待提示符
             const session = await commandExecutor.createInteractiveSession(command, {
               waitForPrompt: true,    // 等待提示符后再返回
-              maxWaitTime: 30000      // 最多等待30秒
+              maxWaitTime: 3000000      // 最多等待30秒
             });
             
             activeSessions.set(session.sessionId, session);

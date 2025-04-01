@@ -252,7 +252,7 @@ export class CommandExecutor {
       cwd = '/', 
       env = {}, 
       waitForPrompt = true, 
-      maxWaitTime = 30000 // 默认最大等待30秒
+      maxWaitTime = 3000000 // 默认最大等待30秒
     } = options;
     
     try {
@@ -327,12 +327,12 @@ export class CommandExecutor {
     };
     
     await new Promise<void>((resolve, reject) => {
-      // 使用默认选项，只保留pty: true
-      this.sshClient!.exec(finalCommand, { 
-        pty: true
-      }, (err, stream) => {
+      // 始终为交互式会话分配 PTY
+      const execOptions = { pty: true };
+      
+      this.sshClient!.exec(finalCommand, execOptions, (err, stream) => {
         if (err) {
-          log.error(`创建交互式会话错误: ${err.message}`);
+          log.error(`执行命令失败: ${finalCommand}`, err);
           reject(err);
           return;
         }
