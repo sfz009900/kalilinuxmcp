@@ -234,18 +234,28 @@ function createServer() {
             
             // 显示实时输出信息
             log.info(`交互式会话已创建并等待提示符，ID: ${session.sessionId}`);
+            
+            // 添加对msfconsole会话的特别提示
+            let responseMessage: any = {
+              status: "success",
+              session_id: session.sessionId,
+              initial_output: session.stdout,
+              waiting_for_input: session.isWaitingForInput
+            };
+            
+            // 如果是msfconsole，添加特殊提示
+            if (command.includes('msfconsole')) {
+              responseMessage.msf_specific = true;
+              responseMessage.msf_message = "msfconsole可能需要额外时间启动。如果当前没有交互提示符，请使用get_command_output检查最新状态。";
+            }
+            
             log.info(`实时输出内容 (${session.stdout.length} 字节):\n${session.stdout.substring(0, 500)}${session.stdout.length > 500 ? '...(更多输出已省略)' : ''}`);
             log.info(`输入状态: ${session.isWaitingForInput ? '等待输入' : '不等待输入'}`);
             
             return {
               content: [{
                 type: "text",
-                text: JSON.stringify({
-                  status: "success",
-                  session_id: session.sessionId,
-                  initial_output: session.stdout,
-                  waiting_for_input: session.isWaitingForInput
-                })
+                text: JSON.stringify(responseMessage)
               }]
             };
           } catch (error) {
