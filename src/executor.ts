@@ -43,9 +43,9 @@ function isWaitingForInput(output: string): boolean {
                        /msf\d*\s*>\s*$/i.test(cleanLine); // 检查msf>提示符
   
   // 在日志中记录最后几行，帮助调试
-  log.debug(`检测输入提示符，最后一行: "${cleanLine}"`);
+  // log.debug(`检测输入提示符，最后一行: "${cleanLine}"`);
   if (isMsfconsole) {
-    log.debug(`检测到可能是msfconsole，最后一行: "${cleanLine}", 输出前100个字符: "${cleanOutput.substring(0, 100)}"`);
+    // log.debug(`检测到可能是msfconsole，最后一行: "${cleanLine}", 输出前100个字符: "${cleanOutput.substring(0, 100)}"`);
     
     // 对于msfconsole，最近的几行中如果包含msf>提示符，很可能是在等待输入
     const lastFewLines = lastLines.join('\n');
@@ -69,7 +69,7 @@ function isWaitingForInput(output: string): boolean {
     // 如果最后一次输出已经过去很长时间，也认为是在等待输入
     const timeWithoutNewOutput = Date.now() - (global as any).lastMsfOutput || 0;
     if (timeWithoutNewOutput > 5000) { // 5秒没有新输出
-      log.debug(`msfconsole已${timeWithoutNewOutput/1000}秒无新输出，判定为等待输入`);
+      // log.debug(`msfconsole已${timeWithoutNewOutput/1000}秒无新输出，判定为等待输入`);
       return true;
     }
   }
@@ -527,7 +527,7 @@ export class CommandExecutor {
           // 对于msfconsole输出，记录更多信息用于调试
           if (isMsfconsole) {
             // 记录msfconsole每次输出，帮助调试
-            log.debug(`[MSF输出] 长度=${output.length}, 内容: "${output.trim()}"`);
+            // log.debug(`[MSF输出] 长度=${output.length}, 内容: "${output.trim()}"`);
             
             // 更新最后输出时间戳
             (global as any).lastMsfOutput = Date.now();

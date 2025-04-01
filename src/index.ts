@@ -462,81 +462,81 @@ async function main() {
       log.info(`SSH连接测试成功! 输出: ${testResult.stdout}`);
       
       // 执行msfconsole测试命令，替换ls -al命令
-      log.info(`=== 启动msfconsole测试会话 ===`);
-      try {
-        // 使用交互式会话方式创建msfconsole
-        const ptyOptions = {
-          waitForPrompt: true,
-          maxWaitTime: 60000, // 增加等待时间，msfconsole启动较慢（1分钟）
-          forcePty: true,
-          term: "xterm-256color",
-          cols: 100,
-          rows: 40
-        };
+      // log.info(`=== 启动msfconsole测试会话 ===`);
+      // try {
+      //   // 使用交互式会话方式创建msfconsole
+      //   const ptyOptions = {
+      //     waitForPrompt: true,
+      //     maxWaitTime: 60000, // 增加等待时间，msfconsole启动较慢（1分钟）
+      //     forcePty: true,
+      //     term: "xterm-256color",
+      //     cols: 100,
+      //     rows: 40
+      //   };
         
-        log.info(`正在启动msfconsole，请稍候...这可能需要几十秒时间`);
-        const testSession = await commandExecutor.createInteractiveSession("msfconsole -q", ptyOptions);
-        log.info(`msfconsole测试会话创建成功，ID: ${testSession.sessionId}`);
+      //   log.info(`正在启动msfconsole，请稍候...这可能需要几十秒时间`);
+      //   const testSession = await commandExecutor.createInteractiveSession("msfconsole -q", ptyOptions);
+      //   log.info(`msfconsole测试会话创建成功，ID: ${testSession.sessionId}`);
         
-        // 展示初始输出详情，帮助调试
-        const initialOutput = testSession.stdout;
-        log.info(`初始输出长度: ${initialOutput.length} 字节`);
-        log.info(`初始输出前200字符:\n${initialOutput.substring(0, 200)}`);
-        log.info(`初始输出末尾200字符:\n${initialOutput.substring(Math.max(0, initialOutput.length - 200))}`);
-        log.info(`输入状态: ${testSession.isWaitingForInput ? '等待输入' : '不等待输入'}`);
+      //   // 展示初始输出详情，帮助调试
+      //   const initialOutput = testSession.stdout;
+      //   log.info(`初始输出长度: ${initialOutput.length} 字节`);
+      //   log.info(`初始输出前200字符:\n${initialOutput.substring(0, 200)}`);
+      //   log.info(`初始输出末尾200字符:\n${initialOutput.substring(Math.max(0, initialOutput.length - 200))}`);
+      //   log.info(`输入状态: ${testSession.isWaitingForInput ? '等待输入' : '不等待输入'}`);
         
-        // 等待更长时间，确保msfconsole完全加载
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        log.info(`等待5秒后的输出长度: ${testSession.stdout.length} 字节`);
+      //   // 等待更长时间，确保msfconsole完全加载
+      //   await new Promise(resolve => setTimeout(resolve, 5000));
+      //   log.info(`等待5秒后的输出长度: ${testSession.stdout.length} 字节`);
         
-        // 执行几个简单的msfconsole命令来测试交互
-        log.info(`发送msfconsole命令: version`);
-        testSession.write("version\n");
+      //   // 执行几个简单的msfconsole命令来测试交互
+      //   log.info(`发送msfconsole命令: version`);
+      //   testSession.write("version\n");
         
-        // 等待命令执行完成
-        await new Promise(resolve => setTimeout(resolve, 3000));
+      //   // 等待命令执行完成
+      //   await new Promise(resolve => setTimeout(resolve, 3000));
         
-        // 获取当前输出并分析msf>提示符
-        const outputAfterVersion = testSession.stdout;
-        log.info(`命令执行后的输出长度: ${outputAfterVersion.length} 字节`);
+      //   // 获取当前输出并分析msf>提示符
+      //   const outputAfterVersion = testSession.stdout;
+      //   log.info(`命令执行后的输出长度: ${outputAfterVersion.length} 字节`);
         
-        // 检查提示符
-        const lines = outputAfterVersion.split('\n');
-        const lastFewLines = lines.slice(-5).join('\n'); // 获取最后5行
-        log.info(`最后几行输出:\n${lastFewLines}`);
+      //   // 检查提示符
+      //   const lines = outputAfterVersion.split('\n');
+      //   const lastFewLines = lines.slice(-5).join('\n'); // 获取最后5行
+      //   log.info(`最后几行输出:\n${lastFewLines}`);
         
-        // 检测msf提示符
-        const hasMsfPrompt = /msf\d*\s*>\s*$/m.test(lastFewLines);
-        log.info(`是否检测到MSF提示符: ${hasMsfPrompt}`);
+      //   // 检测msf提示符
+      //   const hasMsfPrompt = /msf\d*\s*>\s*$/m.test(lastFewLines);
+      //   log.info(`是否检测到MSF提示符: ${hasMsfPrompt}`);
         
-        // 再执行一个命令
-        log.info(`发送msfconsole命令: help`);
-        testSession.write("help\n");
+      //   // 再执行一个命令
+      //   log.info(`发送msfconsole命令: help`);
+      //   testSession.write("help\n");
         
-        // 等待命令执行完成
-        await new Promise(resolve => setTimeout(resolve, 3000));
+      //   // 等待命令执行完成
+      //   await new Promise(resolve => setTimeout(resolve, 3000));
         
-        // 获取最终结果
-        const finalOutput = testSession.stdout;
-        log.info(`输出总长度: ${finalOutput.length} 字节`);
-        log.info(`输出最后300字符:\n${finalOutput.substring(Math.max(0, finalOutput.length - 300))}`);
-        log.info(`最终状态: ${testSession.isWaitingForInput ? '等待输入' : '不等待输入'}`);
+      //   // 获取最终结果
+      //   const finalOutput = testSession.stdout;
+      //   log.info(`输出总长度: ${finalOutput.length} 字节`);
+      //   log.info(`输出最后300字符:\n${finalOutput.substring(Math.max(0, finalOutput.length - 300))}`);
+      //   log.info(`最终状态: ${testSession.isWaitingForInput ? '等待输入' : '不等待输入'}`);
         
-        // 检测总结
-        log.info(`======= msfconsole测试结果总结 =======`);
-        log.info(`1. 会话创建：${testSession ? '成功' : '失败'}`);
-        log.info(`2. 输出捕获：${finalOutput.length > 0 ? '成功' : '失败'} (${finalOutput.length} 字节)`);
-        log.info(`3. 提示符检测：${hasMsfPrompt ? '成功' : '失败'}`);
-        log.info(`4. 输入状态：${testSession.isWaitingForInput ? '等待输入' : '不等待输入'}`);
-        log.info(`=======================================`);
+      //   // 检测总结
+      //   log.info(`======= msfconsole测试结果总结 =======`);
+      //   log.info(`1. 会话创建：${testSession ? '成功' : '失败'}`);
+      //   log.info(`2. 输出捕获：${finalOutput.length > 0 ? '成功' : '失败'} (${finalOutput.length} 字节)`);
+      //   log.info(`3. 提示符检测：${hasMsfPrompt ? '成功' : '失败'}`);
+      //   log.info(`4. 输入状态：${testSession.isWaitingForInput ? '等待输入' : '不等待输入'}`);
+      //   log.info(`=======================================`);
         
-        // 关闭测试会话
-        testSession.close();
-        log.info(`msfconsole测试会话已关闭`);
-      } catch (error) {
-        log.error(`msfconsole测试失败: ${error instanceof Error ? error.message : String(error)}`);
-        // 继续执行，不要因为msfconsole测试失败而终止程序
-      }
+      //   // 关闭测试会话
+      //   testSession.close();
+      //   log.info(`msfconsole测试会话已关闭`);
+      // } catch (error) {
+      //   log.error(`msfconsole测试失败: ${error instanceof Error ? error.message : String(error)}`);
+      //   // 继续执行，不要因为msfconsole测试失败而终止程序
+      // }
       
       log.info(`=== SSH连接测试完成 ===`);
     } catch (error) {
