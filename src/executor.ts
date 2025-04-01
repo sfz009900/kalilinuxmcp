@@ -6,12 +6,15 @@ import { EventEmitter } from 'events';
 import { ClientChannel, ConnectConfig, ExecOptions } from 'ssh2';
 
 /**
- * 移除ANSI转义序列
+ * 移除ANSI转义序列和控制字符
  * 这些序列用于终端颜色和格式化,但在API输出中不需要
  */
 function stripAnsiCodes(str: string): string {
-  // 更完整的ANSI转义序列匹配模式
-  return str.replace(
+  // 先移除所有零值字符（\u0000）和其他控制字符
+  const strWithoutControlChars = str.replace(/[\x00-\x08\x0B-\x1F]/g, '');
+  
+  // 再移除ANSI转义序列
+  return strWithoutControlChars.replace(
     /(\x1B\[[0-9;]*[a-zA-Z])|(\x1B\].*?\x07)|(\x1B\[\?[0-9;]*[a-zA-Z])|(\x1B\[[0-9]+[a-zA-Z])/g,
     ''
   );
@@ -25,6 +28,11 @@ function isWaitingForInput(output: string): boolean {
   // 检查是否有全局重载函数，如果有则使用它
   if ((global as any).overrideWaitingCheck) {
     return (global as any).overrideWaitingCheck(output);
+  }
+  
+  // 检查输出是否为会话对象，如果是并且有msfPromptDetected标记，直接返回true
+  if (output && typeof output === 'object' && (output as any).msfPromptDetected) {
+    return true;
   }
   
   if (!output || output.trim() === '') {
@@ -44,24 +52,16 @@ function isWaitingForInput(output: string): boolean {
   // 检查是否包含msfconsole的启动文本或特殊提示符
   const isMsfconsole = cleanOutput.includes('Metasploit Framework') || 
                        cleanOutput.includes('msf') || 
-                       cleanOutput.includes('Call trans opt:') ||
-                       /msf\d*\s*>\s*$/i.test(cleanLine); // 检查msf>提示符
+                       cleanOutput.includes('Call trans opt:');
   
   // 在日志中记录最后几行，帮助调试
   // log.debug(`检测输入提示符，最后一行: "${cleanLine}"`);
   if (isMsfconsole) {
     // log.debug(`检测到可能是msfconsole，最后一行: "${cleanLine}", 输出前100个字符: "${cleanOutput.substring(0, 100)}"`);
     
-    // 对于msfconsole，最近的几行中如果包含msf>提示符，很可能是在等待输入
-    const lastFewLines = lastLines.join('\n');
-    
-    // 特别检查msf提示符的多种情况
-    if (/msf\d*\s*>\s*$/im.test(lastFewLines) || 
-        cleanLine.trim() === 'msf >' || 
-        cleanLine.trim() === 'msf>' ||
-        cleanLine.trim() === 'msf5 >' || 
-        cleanLine.trim() === 'msf6 >') {
-      // log.debug('检测到msfconsole提示符 msf>，判定为等待输入');
+    // 对于msfconsole，只检测"msf6 >"
+    if (cleanLine.includes('msf6 >') || cleanLine.trim() === 'msf6 >') {
+      // log.debug('检测到msfconsole提示符 msf6 >，判定为等待输入');
       return true;
     }
     
@@ -91,7 +91,7 @@ function isWaitingForInput(output: string): boolean {
     /Enter\s*.*:/i,            // Enter提示
     /\(.*\)\s*$/,              // 括号内选择提示，如 (Y/n)
     /\s+y\/n\s*$/i,            // y/n选择
-    /msf[56]?\s*>\s*$/i,       // msf提示符，支持msf、msf5、msf6等（更精确的正则）
+    /msf6\s*>/,                // 更宽松的msf6 >提示符匹配
     /mysql>\s*$/,              // mysql提示符
     /sqlite>\s*$/,             // sqlite提示符
     /ftp>\s*$/,                // ftp提示符
@@ -425,19 +425,13 @@ export class CommandExecutor {
             log.info(`检测到msfconsole命令，使用简单方式启动`);
             // 先设置终端环境，然后直接执行msfconsole
             setTimeout(() => {
-              // 先清屏，让输出更清晰
-              stream.write("clear\n");
-              log.debug('发送清屏命令');
-              
-              // 设置终端环境
-              Object.entries(termEnv).forEach(([key, value]) => {
-                stream.write(`export ${key}=${value}\n`);
-              });
+              // 同时清屏并设置环境变量（使用一条命令减少输出）
+              stream.write("clear && export TERM=xterm-256color && export COLUMNS=100 && export LINES=40\n");
+              log.debug('发送清屏和环境设置命令');
               
               // 延迟后启动msfconsole
               setTimeout(() => {
-                // 取消别名影响
-                log.debug('发送unalias命令确保使用原始命令');
+                // 取消别名影响，使用静默输出
                 stream.write("unalias msfconsole 2>/dev/null\n");
                 
                 // 使用-q参数启动，减少启动时的输出
@@ -447,8 +441,14 @@ export class CommandExecutor {
                 
                 // 等待msf加载
                 log.debug(`正在等待msfconsole初始化...`);
-              }, 1000);
-            }, 500);
+                
+                // 额外发送一个回车，帮助触发提示符显示
+                setTimeout(() => {
+                  log.debug(`发送额外回车以触发提示符显示`);
+                  stream.write("\n");
+                }, 10000); // 等待10秒后发送回车
+              }, 500);
+            }, 300);
           } else {
             // 非msfconsole命令的处理方式
             setTimeout(() => {
@@ -532,14 +532,36 @@ export class CommandExecutor {
           // 对于msfconsole输出，记录更多信息用于调试
           if (isMsfconsole) {
             // 记录msfconsole每次输出，帮助调试
-            // log.debug(`[MSF输出] 长度=${output.length}, 内容: "${output.trim()}"`);
+            log.debug(`[MSF输出] 长度=${output.length}, 内容: "${output.trim()}"`);
             
             // 更新最后输出时间戳
             (global as any).lastMsfOutput = Date.now();
             
             // 检查是否包含msf>提示符
             if (output.includes('msf') && output.includes('>')) {
-              log.info(`[MSF提示符] 检测到msf>提示符: ${output.trim()}`);
+              // 使用更宽松的检测方式，包含匹配而非严格相等
+              if (output.includes('msf6') || output.trim() === 'msf6') {
+                log.info(`[MSF提示符] 检测到msf6 >提示符: ${output.trim()}`);
+                
+                // 锁定msfconsole等待输入状态，并添加保护标记
+                session.isWaitingForInput = true;
+                (session as any).msfPromptDetected = true; // 添加标记，防止状态被重置
+                
+                // 立即触发等待输入状态，确保能够返回
+                session.emit('input-state-change', true);
+                session.emit('waiting-for-input', session.stdout);
+                
+                // 检查是否有等待会话准备好的Promise
+                if ((global as any).waitingForMsfPrompt && (global as any).waitingForMsfPrompt[session.sessionId]) {
+                  log.info(`检测到msf6 >提示符，解析等待的Promise`);
+                  const resolver = (global as any).waitingForMsfPrompt[session.sessionId];
+                  delete (global as any).waitingForMsfPrompt[session.sessionId];
+                  // 异步解析，避免递归调用
+                  setTimeout(() => resolver(session), 0);
+                }
+              } else {
+                log.debug(`检测到msf和>但不是msf6 >提示符，忽略: ${output.trim()}`);
+              }
             }
           }
           
@@ -556,6 +578,16 @@ export class CommandExecutor {
           }
           
           session.emit('output', cleanOutput);
+          
+          // 如果msf提示符已经检测到，跳过状态检测（防止状态被错误重置）
+          if ((session as any).msfPromptDetected) {
+            // 确保状态始终为"等待输入"
+            if (!session.isWaitingForInput) {
+              session.isWaitingForInput = true;
+              log.debug(`[会话 ${sessionId}] 强制保持输入状态为：等待输入（msf提示符已检测到）`);
+            }
+            return; // 跳过下面的状态检测
+          }
           
           // 立即检查是否等待输入
           const waiting = isWaitingForInput(session.stdout);
@@ -632,8 +664,38 @@ export class CommandExecutor {
       
       log.info(`会话 ${session.sessionId} 开始等待输入提示符，最大等待时间: ${actualMaxWaitTime}ms`);
       
-      // 如果是msfconsole，需要检测是否显式看到了msf>提示符
+      // 初始化全局等待对象
+      if (isMsfconsole) {
+        // 确保全局对象存在
+        if (!(global as any).waitingForMsfPrompt) {
+          (global as any).waitingForMsfPrompt = {};
+        }
+        
+        // 保存resolve函数，允许在检测到msf提示符时直接解析Promise
+        (global as any).waitingForMsfPrompt[session.sessionId] = resolve;
+        
+        log.info(`已设置会话 ${session.sessionId} 的全局等待对象，用于提示符检测`);
+      }
+      
+      // 如果是msfconsole，需要检测是否显式看到了msf6 >提示符
       let hasMsfPrompt = false;
+      
+      // 立即检查当前输出是否已包含msf提示符
+      if (isMsfconsole) {
+        const currentOutput = session.stdout;
+        // 获取最后一行进行检测
+        const lastLine = currentOutput.trim().split('\n').pop() || '';
+        
+        // 使用更宽松的检测方式
+        if (lastLine.includes('msf6 >') || lastLine.trim() === 'msf6 >') {
+          log.info(`会话 ${session.sessionId} 初始检查时已检测到msf6 >提示符，立即返回`);
+          session.isWaitingForInput = true;
+          (session as any).msfPromptDetected = true;
+          session.emit('input-state-change', true);
+          session.emit('waiting-for-input', session.stdout);
+          return resolve(session);
+        }
+      }
       
       // 设置检查器，定期查看是否有msf>提示符出现
       let msfPromptChecker: NodeJS.Timeout | null = null;
@@ -648,15 +710,18 @@ export class CommandExecutor {
         // 每秒检查一次输出中是否出现msf>提示符
         msfPromptChecker = setInterval(() => {
           const output = session.stdout;
-          // 严格检查是否有msf>提示符出现 - 使用更严格的匹配
-          if (/msf\d*\s*>\s*$/m.test(output.trim())) {
+          
+          // 获取最后一行进行检测
+          const lastLine = output.trim().split('\n').pop() || '';
+          
+          // 使用更宽松的检测方式
+          if (lastLine.includes('msf6 >') || lastLine.trim() === 'msf6 >') {
             hasMsfPrompt = true;
-            log.info(`msfconsole会话 ${session.sessionId} 检测到msf>提示符，准备返回`);
+            log.info(`msfconsole会话 ${session.sessionId} 检测到msf6 >提示符，准备返回`);
             
-            // 显示msf>提示符后的最后几行，帮助诊断
-            const lines = output.trim().split('\n');
-            const lastFewLines = lines.slice(-5).join('\n');
-            log.info(`msf>提示符内容: ${lastFewLines}`);
+            // 显示msf提示符后的最后几行，帮助诊断
+            const lastLines = output.trim().split('\n').slice(-5).join('\n');
+            log.info(`触发返回的msf6 >提示符内容: ${lastLines}`);
             
             // 清理定时器
             if (msfPromptChecker) {
@@ -666,46 +731,80 @@ export class CommandExecutor {
             
             // 设置等待输入状态并触发事件
             session.isWaitingForInput = true;
+            (session as any).msfPromptDetected = true; // 添加检测标记
             session.emit('input-state-change', true);
             session.emit('waiting-for-input', session.stdout);
             
             // 清理超时定时器并返回会话
             if (timeoutId) {
               clearTimeout(timeoutId);
+              timeoutId = null;
             }
-            resolve(session);
-          } else {
-            // 如果输出中包含shell提示符但不是msf>提示符，说明msfconsole可能还没启动
-            if (/root@.*?:\S*?[#$]\s*$/m.test(output.trim())) {
-              // 这是普通shell提示符，不是msf>提示符
-              log.debug(`检测到普通shell提示符，但不是msf>提示符，继续等待...`);
-            }
+            
+            // 立即返回会话，确保不会被阻塞
+            return resolve(session);
           }
-        }, 1000);
-        
-        // 普通shell提示符不应触发等待输入事件，覆盖isWaitingForInput检测
-        const originalCheckWaiting = isWaitingForInput;
-        (global as any).overrideWaitingCheck = function(output: string): boolean {
-          // 如果是msfconsole会话，则只有检测到msf>提示符才返回true
-          if ((session as any).isMsfconsoleSession) {
-            // 检查是否有msf>提示符
-            if (/msf\d*\s*>\s*$/m.test(output.trim())) {
-              return true;
-            }
-            // 其他情况返回false，即使是普通shell提示符
-            return false;
-          }
-          
-          // 非msfconsole会话使用原来的检测逻辑
-          return originalCheckWaiting(output);
-        };
+        }, 500); // 更频繁地检查，500ms一次
       }
       
+      // 立即检查等待状态（非msfconsole命令）
+      if (!isMsfconsole && isWaitingForInput(session.stdout)) {
+        log.info(`会话 ${session.sessionId} 初始检查时已处于等待输入状态，立即返回`);
+        session.isWaitingForInput = true;
+        session.emit('input-state-change', true);
+        return resolve(session);
+      }
+      
+      // 普通shell提示符不应触发等待输入事件，覆盖isWaitingForInput检测
+      const originalCheckWaiting = isWaitingForInput;
+      (global as any).overrideWaitingCheck = function(output: string): boolean {
+        // 如果是msfconsole会话，则只有检测到msf6 >提示符才返回true
+        if ((session as any).isMsfconsoleSession) {
+          // 获取最后一行
+          const lastLine = output.trim().split('\n').pop() || '';
+          
+          // 只检测"msf6 >"
+          if (lastLine.trim() === 'msf6 >') {
+            // 设置标记，确保状态保持一致
+            (session as any).msfPromptDetected = true;
+            
+            // 立即解析Promise，确保会话返回
+            if (!hasMsfPrompt) {
+              hasMsfPrompt = true;
+              log.info(`通过overrideWaitingCheck检测到msf提示符，解析Promise返回会话`);
+              
+              // 清理超时定时器
+              if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+              }
+              
+              // 清理msf提示符检查器
+              if (msfPromptChecker) {
+                clearInterval(msfPromptChecker);
+                msfPromptChecker = null;
+              }
+              
+              // 异步解析Promise，避免递归调用导致的堆栈问题
+              setTimeout(() => resolve(session), 0);
+            }
+            
+            return true;
+          }
+          // 其他情况返回false，即使是普通shell提示符
+          return false;
+        }
+        
+        // 非msfconsole会话使用原来的检测逻辑
+        return originalCheckWaiting(output);
+      };
+      
       // 超时处理
-      const timeoutId = setTimeout(() => {
+      let timeoutId: NodeJS.Timeout | null = setTimeout(() => {
         // 清理msf提示符检查器
         if (msfPromptChecker) {
           clearInterval(msfPromptChecker);
+          msfPromptChecker = null;
         }
         
         log.info(`会话 ${session.sessionId} 等待提示符超时，已等待 ${actualMaxWaitTime}ms`);
@@ -726,7 +825,7 @@ export class CommandExecutor {
             // 记录当前输出状态
             log.info(`当前输出内容最后200字符: ${session.stdout.slice(-200)}`);
             
-            // 增加一个额外的等待时间，最多再等待3分钟
+            // 增加一个额外的等待时间，最多再等待60秒
             const extraTimeoutId = setTimeout(() => {
               log.info(`msfconsole会话 ${session.sessionId} 额外等待时间结束，强制返回`);
               log.info(`最终输出内容最后300字符: ${session.stdout.slice(-300)}`);
@@ -740,14 +839,18 @@ export class CommandExecutor {
                 log.info(`没有检测到msf>提示符也没有Metasploit相关输出，假设不可输入`);
               }
               resolve(session);
-            }, 180000); // 额外等待3分钟
+            }, 60000); // 额外等待60秒
             
             // 继续检测msf>提示符
             msfPromptChecker = setInterval(() => {
               const output = session.stdout;
-              if (/msf\d*\s*>\s*$/m.test(output.trim())) {
+              // 获取最后一行
+              const lastLine = output.trim().split('\n').pop() || '';
+              
+              // 使用更宽松的检测方式
+              if (lastLine.includes('msf6 >') || lastLine.trim() === 'msf6 >') {
                 hasMsfPrompt = true;
-                log.info(`msfconsole会话 ${session.sessionId} 在额外等待期间检测到msf>提示符`);
+                log.info(`msfconsole会话 ${session.sessionId} 在额外等待期间检测到msf6 >提示符`);
                 
                 // 清理定时器
                 clearInterval(msfPromptChecker!);
@@ -755,12 +858,14 @@ export class CommandExecutor {
                 
                 // 设置等待输入状态
                 session.isWaitingForInput = true;
+                (session as any).msfPromptDetected = true;
                 session.emit('input-state-change', true);
                 session.emit('waiting-for-input', session.stdout);
                 
-                resolve(session);
+                // 立即返回会话
+                return resolve(session);
               }
-            }, 1000);
+            }, 500);
             
             return; // 不立即解析promise，继续等待
           }
@@ -792,16 +897,52 @@ export class CommandExecutor {
       const waitForInputHandler = () => {
         // 如果是msfconsole会话，但没有检测到msf>提示符，忽略此事件
         if (isMsfconsole && !hasMsfPrompt) {
-          log.debug(`收到waiting-for-input事件但忽略，因为没有检测到msf>提示符`);
-          return; // 不处理此事件，继续等待
+          // 再次检查当前输出中是否已有msf提示符(以防漏检)
+          const output = session.stdout;
+          // 获取最后一行进行检测
+          const lastLine = output.trim().split('\n').pop() || '';
+          
+          // 使用更宽松的检测方式
+          if (lastLine.includes('msf6 >') || lastLine.trim() === 'msf6 >') {
+            hasMsfPrompt = true;
+            log.info(`waitForInputHandler中检测到msf6 >提示符，处理返回`);
+            
+            // 清理msf提示符检查器
+            if (msfPromptChecker) {
+              clearInterval(msfPromptChecker);
+              msfPromptChecker = null;
+            }
+            
+            // 清理超时定时器
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+              timeoutId = null;
+            }
+            
+            // 设置等待输入状态标记
+            session.isWaitingForInput = true;
+            (session as any).msfPromptDetected = true;
+            
+            // 返回会话
+            return resolve(session);
+          } else {
+            log.debug(`收到waiting-for-input事件但忽略，因为没有检测到msf>提示符`);
+            return; // 不处理此事件，继续等待
+          }
         }
         
         // 清理msf提示符检查器
         if (msfPromptChecker) {
           clearInterval(msfPromptChecker);
+          msfPromptChecker = null;
         }
         
-        clearTimeout(timeoutId);
+        // 清理超时定时器
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        
         log.info(`会话 ${session.sessionId} 已准备好接收输入`);
         resolve(session);
       };
@@ -811,9 +952,15 @@ export class CommandExecutor {
         // 清理msf提示符检查器
         if (msfPromptChecker) {
           clearInterval(msfPromptChecker);
+          msfPromptChecker = null;
         }
         
-        clearTimeout(timeoutId);
+        // 清理超时定时器
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        
         resolve(session);
         return;
       }
@@ -826,9 +973,15 @@ export class CommandExecutor {
         // 清理msf提示符检查器
         if (msfPromptChecker) {
           clearInterval(msfPromptChecker);
+          msfPromptChecker = null;
         }
         
-        clearTimeout(timeoutId);
+        // 清理超时定时器
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        
         session.removeListener('waiting-for-input', waitForInputHandler);
         reject(err);
       });
@@ -838,9 +991,21 @@ export class CommandExecutor {
         // 清理msf提示符检查器
         if (msfPromptChecker) {
           clearInterval(msfPromptChecker);
+          msfPromptChecker = null;
         }
         
-        clearTimeout(timeoutId);
+        // 清理超时定时器
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        
+        // 清理全局等待对象
+        if ((global as any).waitingForMsfPrompt && (global as any).waitingForMsfPrompt[session.sessionId]) {
+          delete (global as any).waitingForMsfPrompt[session.sessionId];
+          log.debug(`会话关闭，清理全局等待对象`);
+        }
+        
         session.removeListener('waiting-for-input', waitForInputHandler);
         resolve(session); // 会话已关闭，直接返回
       });
@@ -882,8 +1047,8 @@ export class InteractiveSession extends EventEmitter {
   private waitForPromptReject: ((reason?: any) => void) | null = null;
   private waitForPromptTimer: NodeJS.Timeout | null = null;
 
-  // 更新正则以包含 msfX > 提示符
-  private PROMPT_REGEX = /(\\r?\\n|^)([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+:[^#$>\\s]*\\s?[#$>]|msf\\d+\\s?>)\\s*$/;
+  // 更新正则以更宽松地包含msf6 >提示符
+  private PROMPT_REGEX = /(\\r?\\n|^)([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+:[^#$>\\s]*\\s?[#$>]|msf6\\s*>)\\s*$/;
   
   constructor(sessionId: string, stream: ClientChannel, initialStdout: string = '') {
     super();
