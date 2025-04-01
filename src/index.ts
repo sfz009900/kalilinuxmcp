@@ -215,12 +215,17 @@ function createServer() {
             // 显式设置pty选项，特别是对msfconsole这类特殊终端程序
             const ptyOptions = {
               waitForPrompt: true,    // 等待提示符后再返回
-              maxWaitTime: 3000000,   // 最多等待30秒
+              maxWaitTime: command.includes('msfconsole') ? 120000 : 30000,   // msfconsole等待更长时间(2分钟)，其他命令30秒
               forcePty: command.includes('msfconsole'), // 为msfconsole强制分配PTY
               term: "xterm-256color",  // 设置终端类型
               cols: 100,               // 设置列数
               rows: 40                 // 设置行数
             };
+            
+            // 对于msfconsole特别提示用户可能需要等待较长时间
+            if (command.includes('msfconsole')) {
+              log.info(`正在启动msfconsole，这可能需要1-2分钟时间，请耐心等待...`);
+            }
             
             // 创建交互式会话
             const session = await commandExecutor.createInteractiveSession(command, ptyOptions);

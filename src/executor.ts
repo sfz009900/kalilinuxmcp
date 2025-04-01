@@ -49,7 +49,13 @@ function isWaitingForInput(output: string): boolean {
     
     // 对于msfconsole，最近的几行中如果包含msf>提示符，很可能是在等待输入
     const lastFewLines = lastLines.join('\n');
-    if (/msf\d*\s*>\s*$/i.test(lastFewLines)) {
+    
+    // 特别检查msf提示符的多种情况
+    if (/msf\d*\s*>\s*$/im.test(lastFewLines) || 
+        cleanLine.trim() === 'msf >' || 
+        cleanLine.trim() === 'msf>' ||
+        cleanLine.trim() === 'msf5 >' || 
+        cleanLine.trim() === 'msf6 >') {
       log.debug('检测到msfconsole提示符 msf>，判定为等待输入');
       return true;
     }
@@ -57,6 +63,13 @@ function isWaitingForInput(output: string): boolean {
     // 如果输出中包含metasploit相关的文本且最后一行看起来像是提示符，也认为在等待输入
     if (cleanLine.endsWith('>') || cleanLine.endsWith('#') || cleanLine.endsWith('$')) {
       log.debug('检测到msf相关内容且最后一行是提示符，判定为等待输入');
+      return true;
+    }
+    
+    // 如果最后一次输出已经过去很长时间，也认为是在等待输入
+    const timeWithoutNewOutput = Date.now() - (global as any).lastMsfOutput || 0;
+    if (timeWithoutNewOutput > 5000) { // 5秒没有新输出
+      log.debug(`msfconsole已${timeWithoutNewOutput/1000}秒无新输出，判定为等待输入`);
       return true;
     }
   }
@@ -411,18 +424,24 @@ export class CommandExecutor {
               stream.write("clear\n");
               log.debug('发送清屏命令');
               
-              // 直接执行msfconsole命令，不使用finalCommand的复杂形式
+              // 设置终端环境
+              Object.entries(termEnv).forEach(([key, value]) => {
+                stream.write(`export ${key}=${value}\n`);
+              });
+              
+              // 延迟后启动msfconsole
               setTimeout(() => {
+                // 取消别名影响
+                log.debug('发送unalias命令确保使用原始命令');
+                stream.write("unalias msfconsole 2>/dev/null\n");
+                
                 // 使用-q参数启动，减少启动时的输出
-                const msfCmd = 'msfconsole -q';
+                const msfCmd = '/usr/bin/msfconsole -q';  // 使用绝对路径
                 log.info(`发送msfconsole启动命令: ${msfCmd}`);
                 stream.write(`${msfCmd}\n`);
                 
-                // 添加调试辅助命令，等待msfconsole完全启动
-                setTimeout(() => {
-                  log.debug('发送msfconsole测试命令: banner');
-                  stream.write("banner\n");
-                }, 5000);
+                // 等待msf加载
+                log.debug(`正在等待msfconsole初始化...`);
               }, 1000);
             }, 500);
           } else {
@@ -509,6 +528,9 @@ export class CommandExecutor {
           if (isMsfconsole) {
             // 记录msfconsole每次输出，帮助调试
             log.debug(`[MSF输出] 长度=${output.length}, 内容: "${output.trim()}"`);
+            
+            // 更新最后输出时间戳
+            (global as any).lastMsfOutput = Date.now();
             
             // 检查是否包含msf>提示符
             if (output.includes('msf') && output.includes('>')) {
