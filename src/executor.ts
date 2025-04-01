@@ -3,6 +3,7 @@ import * as ssh2 from 'ssh2';
 import * as fs from 'fs';
 import { log } from './index.js';
 import { EventEmitter } from 'events';
+import { ClientChannel, ConnectConfig, ExecOptions } from 'ssh2';
 
 /**
  * 移除ANSI转义序列
@@ -242,6 +243,10 @@ export class CommandExecutor {
       env?: Record<string, string>;
       waitForPrompt?: boolean; // 是否等待提示符后再返回
       maxWaitTime?: number;    // 最大等待时间(毫秒)
+      forcePty?: boolean;      // 是否强制分配PTY
+      term?: string;           // 终端类型
+      cols?: number;           // 终端列数
+      rows?: number;           // 终端行数
     } = {}
   ): Promise<InteractiveSession> {
     if (!this.isConnected || !this.sshClient) {
@@ -252,7 +257,11 @@ export class CommandExecutor {
       cwd = '/', 
       env = {}, 
       waitForPrompt = true, 
-      maxWaitTime = 3000000 // 默认最大等待30秒
+      maxWaitTime = 3000000, // 默认最大等待30秒
+      forcePty = false,      // 默认不强制PTY
+      term = 'xterm-256color', // 默认终端类型
+      cols = 80,             // 默认终端列数
+      rows = 24              // 默认终端行数
     } = options;
     
     try {
@@ -265,9 +274,9 @@ export class CommandExecutor {
       
       // 为交互式终端添加必要的环境变量
       const defaultEnvSettings = [
-        'export TERM=xterm-256color',
-        'export COLUMNS=80',
-        'export LINES=24',
+        `export TERM=${term}`,
+        `export COLUMNS=${cols}`,
+        `export LINES=${rows}`,
         'export PS1="\\u@\\h:\\w\\$ "'
       ].join('; ');
       
@@ -279,8 +288,11 @@ export class CommandExecutor {
       // 对于msfconsole等命令，添加特殊处理
       if (command.includes('msfconsole')) {
         log.info('检测到msfconsole命令，添加特殊处理');
-        // 不再添加version命令，让它自然启动并等待真正的提示符
-        processedCommand = `${command} -q`; // 仅使用安静模式
+        // 确保使用安静模式启动
+        if (!processedCommand.includes('-q')) {
+          processedCommand = `${processedCommand} -q`; 
+        }
+        log.info(`处理后的msfconsole命令: ${processedCommand}`);
       }
       
       // 最终命令
@@ -288,7 +300,14 @@ export class CommandExecutor {
       
       // 创建会话并配置
       const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
-      const session = await this.createSessionObject(sessionId, finalCommand);
+      
+      // 传递PTY相关参数到createSessionObject
+      const session = await this.createSessionObject(sessionId, finalCommand, {
+        forcePty,
+        term,
+        cols,
+        rows
+      });
       
       log.info(`交互式会话创建成功，ID: ${sessionId}`);
       
@@ -309,7 +328,16 @@ export class CommandExecutor {
    * 创建会话对象并配置事件处理
    * @private
    */
-  private async createSessionObject(sessionId: string, finalCommand: string): Promise<InteractiveSession> {
+  private async createSessionObject(
+    sessionId: string, 
+    finalCommand: string, 
+    ptyOptions: {
+      forcePty?: boolean;
+      term?: string;
+      cols?: number;
+      rows?: number;
+    } = {}
+  ): Promise<InteractiveSession> {
     // 创建一个会话对象
     const session = new EventEmitter() as InteractiveSession;
     session.stdout = '';
@@ -326,17 +354,71 @@ export class CommandExecutor {
       }
     };
     
+    // 保存this引用以在内部函数中使用
+    const self = this;
+    
     await new Promise<void>((resolve, reject) => {
       // 始终为交互式会话分配 PTY
-      const execOptions = { pty: true };
+      const execOptions: ExecOptions = { 
+        pty: true,
+        // 移除不支持的属性，通过环境变量设置
+      };
       
-      this.sshClient!.exec(finalCommand, execOptions, (err, stream) => {
-        if (err) {
-          log.error(`执行命令失败: ${finalCommand}`, err);
-          reject(err);
-          return;
-        }
+      // 设置环境变量来配置终端
+      const termEnv = {
+        TERM: ptyOptions.term || 'xterm-256color',
+        COLUMNS: String(ptyOptions.cols || 80),
+        LINES: String(ptyOptions.rows || 24)
+      };
+      
+      // 如果强制使用PTY，尝试使用shell代替exec
+      if (ptyOptions.forcePty) {
+        log.info(`为会话 ${sessionId} 强制使用PTY并启动shell`);
         
+        this.sshClient!.shell(execOptions, (err, stream) => {
+          if (err) {
+            log.error(`启动shell失败: ${finalCommand}`, err);
+            reject(err);
+            return;
+          }
+          
+          // 先设置终端环境变量，然后运行命令
+          setTimeout(() => {
+            // 设置终端环境
+            Object.entries(termEnv).forEach(([key, value]) => {
+              stream.write(`export ${key}=${value}\n`);
+            });
+            
+            // 运行实际命令
+            setTimeout(() => {
+              stream.write(`${finalCommand}\n`);
+            }, 200);
+          }, 300);
+          
+          setupStreamHandlers(stream);
+        });
+      } else {
+        // 使用常规exec方法，但添加环境变量
+        // 将环境变量添加到命令前面
+        const envPrefix = Object.entries(termEnv)
+          .map(([key, value]) => `export ${key}=${value}`)
+          .join('; ');
+        
+        const commandWithEnv = `${envPrefix}; ${finalCommand}`;
+        
+        this.sshClient!.exec(commandWithEnv, execOptions, (err, stream) => {
+          if (err) {
+            log.error(`执行命令失败: ${commandWithEnv}`, err);
+            reject(err);
+            return;
+          }
+          
+          setupStreamHandlers(stream);
+        });
+      }
+      
+      // 设置流处理程序的函数
+      function setupStreamHandlers(stream: ClientChannel) {
         // 设置输入流
         session.stdin = stream;
         
@@ -419,7 +501,7 @@ export class CommandExecutor {
           if (checkInputTimer) {
             clearTimeout(checkInputTimer);
           }
-          this.sessions.delete(sessionId);
+          self.sessions.delete(sessionId);  // 使用外部保存的this引用
           session.emit('close');
         });
         
@@ -438,9 +520,9 @@ export class CommandExecutor {
         });
         
         // 会话创建成功
-        this.sessions.set(sessionId, session);
+        self.sessions.set(sessionId, session);  // 使用外部保存的this引用
         resolve();
-      });
+      }
     });
     
     return session;
@@ -532,6 +614,102 @@ export class CommandExecutor {
       log.info('断开NodeSSH连接');
       this.ssh.dispose();
       this.isConnected = false;
+    }
+  }
+}
+
+export class InteractiveSession extends EventEmitter {
+  sessionId: string;
+  private stream: ClientChannel | undefined;
+  stdout: string = '';
+  stderr: string = '';
+  isWaitingForInput: boolean = false;
+  private promptDetected: boolean = false;
+  private waitForPromptResolve: ((value: void | PromiseLike<void>) => void) | null = null;
+  private waitForPromptReject: ((reason?: any) => void) | null = null;
+  private waitForPromptTimer: NodeJS.Timeout | null = null;
+
+  // 更新正则以包含 msfX > 提示符
+  private PROMPT_REGEX = /(\\r?\\n|^)([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+:[^#$>\\s]*\\s?[#$>]|msf\\d+\\s?>)\\s*$/;
+  
+  constructor(sessionId: string, stream: ClientChannel, initialStdout: string = '') {
+    super();
+    this.sessionId = sessionId;
+    this.stream = stream;
+    this.stdout = initialStdout;
+  }
+
+  async waitForSessionPrompt(maxWaitTime: number): Promise<void> {
+    log.debug(`[${this.sessionId}] Waiting for session prompt, max wait: ${maxWaitTime}ms`);
+    return new Promise((resolve, reject) => {
+      this.waitForPromptResolve = resolve;
+      this.waitForPromptReject = reject;
+
+      // 设置超时
+      this.waitForPromptTimer = setTimeout(() => {
+        log.warn(`[${this.sessionId}] Wait for prompt timed out after ${maxWaitTime}ms.`);
+        // 清理监听器
+        if (this.stream) {
+          this.stream.removeListener('data', this._promptDataHandler);
+          this.stream.removeListener('stderr', this._promptErrorHandler);
+        }
+        reject(new Error(`Wait for prompt timed out after ${maxWaitTime}ms`));
+      }, maxWaitTime);
+
+      // 添加临时监听器来检测提示符
+      if (this.stream) {
+        this.stream.on('data', this._promptDataHandler);
+        this.stream.on('stderr', this._promptErrorHandler);
+      }
+      
+      // 立即检查一次现有输出
+      this._checkForPrompt();
+    });
+  }
+
+  // 用于等待提示符的 data 处理函数
+  private _promptDataHandler = (data: Buffer) => {
+    const dataStr = data.toString();
+    log.debug(`[${this.sessionId}] Raw data during prompt wait: ${dataStr}`); // 记录原始输出
+    this.stdout += dataStr;
+    this._checkForPrompt();
+  };
+
+  // 用于等待提示符的 error 处理函数
+  private _promptErrorHandler = (data: Buffer) => {
+    const dataStr = data.toString();
+    log.debug(`[${this.sessionId}] Raw stderr during prompt wait: ${dataStr}`); // 记录错误输出
+    this.stderr += dataStr;
+    // 错误也可能包含提示符或者指示已准备就绪，所以也检查
+    this._checkForPrompt(); 
+  };
+
+
+  private _checkForPrompt() {
+    if (this.promptDetected || !this.waitForPromptResolve) {
+      return; // 已经检测到或没有在等待
+    }
+
+    // 使用更新后的正则检查输出末尾是否有提示符
+    if (this.PROMPT_REGEX.test(this.stdout)) {
+      log.info(`[${this.sessionId}] Prompt detected.`);
+      this.promptDetected = true;
+      this.isWaitingForInput = true; // 假设检测到提示符就表示等待输入
+      
+      // 清理定时器和监听器
+      if (this.waitForPromptTimer) clearTimeout(this.waitForPromptTimer);
+      if (this.stream) {
+        this.stream.removeListener('data', this._promptDataHandler);
+        this.stream.removeListener('stderr', this._promptErrorHandler);
+      }
+
+      // 解析 Promise
+      this.waitForPromptResolve();
+      this.waitForPromptResolve = null;
+      this.waitForPromptReject = null;
+      
+      // 发出状态变化事件
+      this.emit('input-state-change', this.isWaitingForInput);
     }
   }
 }

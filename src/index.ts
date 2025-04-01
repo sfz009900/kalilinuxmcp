@@ -198,24 +198,39 @@ function createServer() {
         
         // 启动交互式命令
         case "start_interactive_command": {
-          const command = String(request.params.arguments?.command);
+          let command = String(request.params.arguments?.command);
           if (!command) {
             throw new McpError(ErrorCode.InvalidParams, "命令是必需的");
+          }
+
+          // 如果是 msfconsole，添加 -q 参数
+          if (command.trim() === 'msfconsole') {
+            command = 'msfconsole -q';
+            log.info("检测到 msfconsole，自动添加 -q 参数启动。");
           }
           
           try {
             log.info(`准备启动交互式命令: ${command}`);
             
-            // 创建交互式会话 - 使用waitForPrompt=true等待提示符
-            const session = await commandExecutor.createInteractiveSession(command, {
+            // 显式设置pty选项，特别是对msfconsole这类特殊终端程序
+            const ptyOptions = {
               waitForPrompt: true,    // 等待提示符后再返回
-              maxWaitTime: 3000000      // 最多等待30秒
-            });
+              maxWaitTime: 3000000,   // 最多等待30秒
+              forcePty: command.includes('msfconsole'), // 为msfconsole强制分配PTY
+              term: "xterm-256color",  // 设置终端类型
+              cols: 100,               // 设置列数
+              rows: 40                 // 设置行数
+            };
+            
+            // 创建交互式会话
+            const session = await commandExecutor.createInteractiveSession(command, ptyOptions);
             
             activeSessions.set(session.sessionId, session);
             
+            // 显示实时输出信息
             log.info(`交互式会话已创建并等待提示符，ID: ${session.sessionId}`);
-            log.info(`命令输出: ${session.stdout}`);
+            log.info(`实时输出内容 (${session.stdout.length} 字节):\n${session.stdout.substring(0, 500)}${session.stdout.length > 500 ? '...(更多输出已省略)' : ''}`);
+            log.info(`输入状态: ${session.isWaitingForInput ? '等待输入' : '不等待输入'}`);
             
             return {
               content: [{
@@ -441,10 +456,39 @@ async function main() {
       const testResult = await commandExecutor.executeCommand("echo '连接测试成功'", { timeout: 10000 });
       log.info(`SSH连接测试成功! 输出: ${testResult.stdout}`);
       
-      // 执行ls -al命令
-      log.info(`=== 执行测试命令: ls -al ===`);
-      const lsResult = await commandExecutor.executeCommand("ls -al", { timeout: 10000 });
-      log.info(`命令执行结果: \n${lsResult.stdout}`);
+      // 执行msfconsole测试命令，替换ls -al命令
+      log.info(`=== 启动msfconsole测试会话 ===`);
+      try {
+        // 使用交互式会话方式创建msfconsole
+        const ptyOptions = {
+          waitForPrompt: true,
+          maxWaitTime: 15000,
+          forcePty: true,
+          term: "xterm-256color",
+          cols: 100,
+          rows: 40
+        };
+        
+        const testSession = await commandExecutor.createInteractiveSession("msfconsole -q", ptyOptions);
+        log.info(`msfconsole测试会话创建成功，ID: ${testSession.sessionId}`);
+        log.info(`msfconsole初始输出 (${testSession.stdout.length} 字节):\n${testSession.stdout.substring(0, 300)}${testSession.stdout.length > 300 ? '...(更多输出已省略)' : ''}`);
+        log.info(`输入状态: ${testSession.isWaitingForInput ? '等待输入' : '不等待输入'}`);
+        
+        // 执行一个简单的msfconsole命令
+        if (testSession.isWaitingForInput) {
+          testSession.write("version\n");
+          // 等待命令输出
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          log.info(`msfconsole命令执行结果:\n${testSession.stdout.substring(testSession.stdout.indexOf("version"))}`);
+        }
+        
+        // 关闭测试会话
+        testSession.close();
+        log.info(`msfconsole测试会话已关闭`);
+      } catch (error) {
+        log.error(`msfconsole测试失败: ${error instanceof Error ? error.message : String(error)}`);
+        // 继续执行，不要因为msfconsole测试失败而终止程序
+      }
       
       log.info(`=== SSH连接测试完成 ===`);
     } catch (error) {
