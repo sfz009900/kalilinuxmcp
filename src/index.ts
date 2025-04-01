@@ -336,8 +336,13 @@ function createServer() {
               });
             });
             
-            // 获取新输出
-            const newOutput = session.stdout.substring(beforeLength);
+            // 获取新输出，从上次输出的位置开始
+            if (!(session as any).lastOutputPosition) {
+              (session as any).lastOutputPosition = beforeLength;
+            }
+            const newOutput = session.stdout.substring((session as any).lastOutputPosition);
+            // 更新上次输出位置
+            (session as any).lastOutputPosition = session.stdout.length;
             
             log.info(`命令执行完成，等待输入状态: ${session.isWaitingForInput}, 新输出长度: ${newOutput.length}`);
             
