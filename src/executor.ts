@@ -36,15 +36,29 @@ function isWaitingForInput(output: string): boolean {
   const lastLine = lastLines.length > 0 ? lastLines[lastLines.length - 1] : '';
   const cleanLine = lastLine.trim();
   
-  // 检查是否包含msfconsole的启动文本
+  // 检查是否包含msfconsole的启动文本或特殊提示符
   const isMsfconsole = cleanOutput.includes('Metasploit Framework') || 
                        cleanOutput.includes('msf') || 
-                       cleanOutput.includes('Call trans opt:');
-
+                       cleanOutput.includes('Call trans opt:') ||
+                       /msf\d*\s*>\s*$/i.test(cleanLine); // 检查msf>提示符
+  
   // 在日志中记录最后几行，帮助调试
   log.debug(`检测输入提示符，最后一行: "${cleanLine}"`);
   if (isMsfconsole) {
-    log.debug(`检测到可能是msfconsole，输出前100个字符: "${cleanOutput.substring(0, 100)}"`);
+    log.debug(`检测到可能是msfconsole，最后一行: "${cleanLine}", 输出前100个字符: "${cleanOutput.substring(0, 100)}"`);
+    
+    // 对于msfconsole，最近的几行中如果包含msf>提示符，很可能是在等待输入
+    const lastFewLines = lastLines.join('\n');
+    if (/msf\d*\s*>\s*$/i.test(lastFewLines)) {
+      log.debug('检测到msfconsole提示符 msf>，判定为等待输入');
+      return true;
+    }
+    
+    // 如果输出中包含metasploit相关的文本且最后一行看起来像是提示符，也认为在等待输入
+    if (cleanLine.endsWith('>') || cleanLine.endsWith('#') || cleanLine.endsWith('$')) {
+      log.debug('检测到msf相关内容且最后一行是提示符，判定为等待输入');
+      return true;
+    }
   }
   
   // 常见的提示符模式
@@ -59,7 +73,7 @@ function isWaitingForInput(output: string): boolean {
     /Enter\s*.*:/i,            // Enter提示
     /\(.*\)\s*$/,              // 括号内选择提示，如 (Y/n)
     /\s+y\/n\s*$/i,            // y/n选择
-    /msf[56]?\s*>\s*$/,       // msf提示符，支持msf、msf5、msf6等
+    /msf[56]?\s*>\s*$/i,       // msf提示符，支持msf、msf5、msf6等（更精确的正则）
     /mysql>\s*$/,              // mysql提示符
     /sqlite>\s*$/,             // sqlite提示符
     /ftp>\s*$/,                // ftp提示符
@@ -68,14 +82,16 @@ function isWaitingForInput(output: string): boolean {
     /waiting for input/i        // 通用等待输入文本
   ];
   
-  // msfconsole特殊处理 - 如果输出包含Metasploit相关内容，并且有一段时间没有更新
-  if (isMsfconsole) {
-    // 对于msfconsole，如果输出包含特定文本并且最近没有新数据，很可能是在等待输入
-    return true;
+  // 检查最后一行是否匹配任何提示符模式
+  for (const pattern of promptPatterns) {
+    if (pattern.test(cleanLine)) {
+      log.debug(`匹配到提示符模式 ${pattern}，判定为等待输入`);
+      return true;
+    }
   }
   
-  // 检查最后一行是否匹配任何提示符模式
-  return promptPatterns.some(pattern => pattern.test(cleanLine));
+  // 如果都不匹配，则默认不是在等待输入
+  return false;
 }
 
 // 定义交互式会话事件类型
@@ -357,6 +373,10 @@ export class CommandExecutor {
     // 保存this引用以在内部函数中使用
     const self = this;
     
+    // 从finalCommand中提取实际命令，用于后面判断
+    const actualCommand = finalCommand.split('&&').pop()?.trim() || finalCommand;
+    const isMsfconsole = actualCommand.includes('msfconsole');
+    
     await new Promise<void>((resolve, reject) => {
       // 始终为交互式会话分配 PTY
       const execOptions: ExecOptions = { 
@@ -382,18 +402,45 @@ export class CommandExecutor {
             return;
           }
           
-          // 先设置终端环境变量，然后运行命令
-          setTimeout(() => {
-            // 设置终端环境
-            Object.entries(termEnv).forEach(([key, value]) => {
-              stream.write(`export ${key}=${value}\n`);
-            });
-            
-            // 运行实际命令
+          // 对于msfconsole，需要特殊处理
+          if (isMsfconsole) {
+            log.info(`检测到msfconsole命令，使用简单方式启动`);
+            // 先设置终端环境，然后直接执行msfconsole
             setTimeout(() => {
-              stream.write(`${finalCommand}\n`);
-            }, 200);
-          }, 300);
+              // 先清屏，让输出更清晰
+              stream.write("clear\n");
+              log.debug('发送清屏命令');
+              
+              // 直接执行msfconsole命令，不使用finalCommand的复杂形式
+              setTimeout(() => {
+                // 使用-q参数启动，减少启动时的输出
+                const msfCmd = 'msfconsole -q';
+                log.info(`发送msfconsole启动命令: ${msfCmd}`);
+                stream.write(`${msfCmd}\n`);
+                
+                // 添加调试辅助命令，等待msfconsole完全启动
+                setTimeout(() => {
+                  log.debug('发送msfconsole测试命令: banner');
+                  stream.write("banner\n");
+                }, 5000);
+              }, 1000);
+            }, 500);
+          } else {
+            // 非msfconsole命令的处理方式
+            setTimeout(() => {
+              // 设置终端环境
+              Object.entries(termEnv).forEach(([key, value]) => {
+                stream.write(`export ${key}=${value}\n`);
+              });
+              
+              // 运行实际命令 - 使用真实命令部分
+              setTimeout(() => {
+                const extractedCommand = actualCommand;
+                log.debug(`发送实际命令: ${extractedCommand}`);
+                stream.write(`${extractedCommand}\n`);
+              }, 200);
+            }, 300);
+          }
           
           setupStreamHandlers(stream);
         });
@@ -457,6 +504,18 @@ export class CommandExecutor {
         // 处理输出流 - 使用更可靠的数据处理
         stream.on('data', (data: Buffer) => {
           const output = data.toString();
+          
+          // 对于msfconsole输出，记录更多信息用于调试
+          if (isMsfconsole) {
+            // 记录msfconsole每次输出，帮助调试
+            log.debug(`[MSF输出] 长度=${output.length}, 内容: "${output.trim()}"`);
+            
+            // 检查是否包含msf>提示符
+            if (output.includes('msf') && output.includes('>')) {
+              log.info(`[MSF提示符] 检测到msf>提示符: ${output.trim()}`);
+            }
+          }
+          
           // 添加ANSI转义序列过滤
           const cleanOutput = stripAnsiCodes(output);
           session.stdout += cleanOutput;
