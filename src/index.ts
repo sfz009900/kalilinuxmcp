@@ -10,6 +10,8 @@ import {
   CallToolRequest
 } from "@modelcontextprotocol/sdk/types.js";
 import { CommandExecutor, InteractiveSession, stripAnsiCodes } from "./executor.js";
+import { EventEmitter } from 'events';
+import { ClientChannel, ConnectConfig, ExecOptions } from 'ssh2';
 
 // 启用调试模式
 process.env.DEBUG = 'true';
@@ -44,6 +46,9 @@ const commandExecutor = new CommandExecutor();
 
 // 存储活跃的交互式会话
 const activeSessions: Map<string, InteractiveSession> = new Map();
+
+// 添加全局变量存储当前命令
+(global as any).currentInteractiveCommand = '';
 
 // 创建服务器
 function createServer() {
@@ -202,6 +207,9 @@ function createServer() {
           if (!command) {
             throw new McpError(ErrorCode.InvalidParams, "命令是必需的");
           }
+
+          // 存储当前命令到全局变量
+          (global as any).currentInteractiveCommand = command;
 
           // 如果是 msfconsole，添加 -q 参数
           if (command.trim() === 'msfconsole') {

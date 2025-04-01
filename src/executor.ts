@@ -49,13 +49,13 @@ function isWaitingForInput(output: string): boolean {
   const lastLine = lastLines.length > 0 ? lastLines[lastLines.length - 1] : '';
   const cleanLine = lastLine.trim();
   
-  // 检查是否包含msfconsole的启动文本或特殊提示符
-  const isMsfconsole = cleanOutput.includes('Metasploit Framework') || 
-                       cleanOutput.includes('msf') || 
-                       cleanOutput.includes('Call trans opt:');
+  // 检查命令是否为msfconsole
+  const isMsfconsole = (global as any).currentInteractiveCommand?.includes('msfc') || false;
   
   // 在日志中记录最后几行，帮助调试
   // log.debug(`检测输入提示符，最后一行: "${cleanLine}"`);
+  
+  // msfconsole特殊处理
   if (isMsfconsole) {
     // log.debug(`检测到可能是msfconsole，最后一行: "${cleanLine}", 输出前100个字符: "${cleanOutput.substring(0, 100)}"`);
     
@@ -64,47 +64,36 @@ function isWaitingForInput(output: string): boolean {
       // log.debug('检测到msfconsole提示符 msf6 >，判定为等待输入');
       return true;
     }
-    
-    // 如果输出中包含metasploit相关的文本且最后一行看起来像是提示符，也认为在等待输入
-    if (cleanLine.endsWith('>') || cleanLine.endsWith('#') || cleanLine.endsWith('$')) {
-      // log.debug('检测到msf相关内容且最后一行是提示符，判定为等待输入');
-      return true;
-    }
-    
-    // 如果最后一次输出已经过去很长时间，也认为是在等待输入
-    const timeWithoutNewOutput = Date.now() - (global as any).lastMsfOutput || 0;
-    if (timeWithoutNewOutput > 5000) { // 5秒没有新输出
-      // log.debug(`msfconsole已${timeWithoutNewOutput/1000}秒无新输出，判定为等待输入`);
-      return true;
-    }
+    // 如果是msfconsole但没有匹配到上面的特殊情况，则返回false
+    return false;
   }
-  
-  // 常见的提示符模式
-  const promptPatterns = [
-    /[\$#>]\s*$/,              // 常见的shell提示符: $, #, > 
-    /password[: ]*$/i,         // 密码提示
-    /continue\? \[(y\/n)\]/i,  // 继续提示
-    /\[\?\]\s*$/,              // 问号提示
-    /输入.*[:：]/,              // 中文输入提示
-    /please enter.*:/i,        // 英文输入提示
-    /press.*to continue/i,     // 按键继续提示
-    /Enter\s*.*:/i,            // Enter提示
-    /\(.*\)\s*$/,              // 括号内选择提示，如 (Y/n)
-    /\s+y\/n\s*$/i,            // y/n选择
-    /msf6\s*>/,                // 更宽松的msf6 >提示符匹配
-    /mysql>\s*$/,              // mysql提示符
-    /sqlite>\s*$/,             // sqlite提示符
-    /ftp>\s*$/,                // ftp提示符
-    /postgres=#\s*$/,          // postgres提示符
-    /Press RETURN to continue/, // 按回车继续
-    /waiting for input/i        // 通用等待输入文本
-  ];
-  
-  // 检查最后一行是否匹配任何提示符模式
-  for (const pattern of promptPatterns) {
-    if (pattern.test(cleanLine)) {
-      log.debug(`匹配到提示符模式 ${pattern}，判定为等待输入`);
-      return true;
+  else {
+    // 非msfconsole命令才使用常见的提示符模式
+    const promptPatterns = [
+      /[\$#>]\s*$/,              // 常见的shell提示符: $, #, > 
+      /password[: ]*$/i,         // 密码提示
+      /continue\? \[(y\/n)\]/i,  // 继续提示
+      /\[\?\]\s*$/,              // 问号提示
+      /输入.*[:：]/,              // 中文输入提示
+      /please enter.*:/i,        // 英文输入提示
+      /press.*to continue/i,     // 按键继续提示
+      /Enter\s*.*:/i,            // Enter提示
+      /\(.*\)\s*$/,              // 括号内选择提示，如 (Y/n)
+      /\s+y\/n\s*$/i,            // y/n选择
+      /mysql>\s*$/,              // mysql提示符
+      /sqlite>\s*$/,             // sqlite提示符
+      /ftp>\s*$/,                // ftp提示符
+      /postgres=#\s*$/,          // postgres提示符
+      /Press RETURN to continue/, // 按回车继续
+      /waiting for input/i        // 通用等待输入文本
+    ];
+    
+    // 检查最后一行是否匹配任何提示符模式
+    for (const pattern of promptPatterns) {
+      if (pattern.test(cleanLine)) {
+        log.debug(`匹配到提示符模式 ${pattern}，判定为等待输入`);
+        return true;
+      }
     }
   }
   
