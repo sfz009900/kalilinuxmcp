@@ -69,7 +69,7 @@ function createServer() {
       tools: [
         {
           name: "execute_command",
-          description: "(无需交互式比如ping 127.0.0.1)在Kali Linux渗透测试环境中执行命令。支持所有Kali Linux内置的安全测试工具和常规Linux命令。",
+          description: "可与start_interactive_command和send_input_to_command交叉使用,(无需交互式比如ping 127.0.0.1)在Kali Linux渗透测试环境中执行命令。支持所有Kali Linux内置的安全测试工具和常规Linux命令。",
           inputSchema: {
             type: "object",
             properties: {
@@ -83,7 +83,7 @@ function createServer() {
         },
         {
           name: "start_interactive_command",
-          description: "(需要交互式比如mysql -u root -p)在Kali Linux环境中启动一个交互式命令，并返回会话ID。交互式命令可以接收用户输入。",
+          description: "可与execute_command和send_input_to_command交叉使用,(需要交互式比如mysql -u root -p)在Kali Linux环境中启动一个交互式命令，并返回会话ID。交互式命令可以接收用户输入。",
           inputSchema: {
             type: "object",
             properties: {
@@ -97,7 +97,7 @@ function createServer() {
         },
         {
           name: "send_input_to_command",
-          description: "(自行判断是AI输入还是用户手动输入)向正在运行的交互式命令发送用户输入。",
+          description: "可与execute_command和start_interactive_command交叉使用,(自行判断是AI输入还是用户手动输入)向正在运行的交互式命令发送用户输入。",
           inputSchema: {
             type: "object",
             properties: {
@@ -293,47 +293,61 @@ function createServer() {
             // 发送输入，根据需要添加换行符
             session.write(endLine ? `${input}\n` : input);
             
-            // 等待新输出或新的输入提示符
-            const newOutput = await new Promise<{ output: string; waitingForInput: boolean }>((resolve) => {
-              // 创建一个等待输入状态变化的处理器
-              const inputStateHandler = (waiting: boolean) => {
-                const newText = session.stdout.substring(beforeLength);
-                resolve({ output: newText, waitingForInput: waiting });
+            // 等待命令执行完成并出现输入提示
+            const maxWaitTime = 3000000; // 较长等待时间(50分钟)
+            
+            // 使用Promise等待输入状态变为true
+            await new Promise<void>((resolve, reject) => {
+              // 如果已经是等待输入状态，立即解析
+              if (session.isWaitingForInput) {
+                resolve();
+                return;
+              }
+              
+              // 等待"waiting-for-input"事件
+              const waitHandler = () => {
+                clearTimeout(timeoutId);
+                resolve();
               };
               
-              // 先等待1秒，看是否有新输出
-              setTimeout(() => {
-                const newText = session.stdout.substring(beforeLength);
-                
-                if (newText.length > 0) {
-                  // 有新输出，检查是否在等待输入
-                  resolve({ output: newText, waitingForInput: session.isWaitingForInput });
-                  return;
-                }
-                
-                // 如果没有新输出，开始监听输入状态变化
-                session.once('input-state-change', inputStateHandler);
-                
-                // 再次等待2秒
-                setTimeout(() => {
-                  // 移除监听器
-                  session.removeListener('input-state-change', inputStateHandler);
-                  // 无论如何返回当前状态
-                  resolve({ 
-                    output: session.stdout.substring(beforeLength),
-                    waitingForInput: session.isWaitingForInput
-                  });
-                }, 2000);
-              }, 1000);
+              // 设置超时
+              const timeoutId = setTimeout(() => {
+                session.removeListener('waiting-for-input', waitHandler);
+                log.info(`等待输入提示超时，已等待${maxWaitTime}毫秒`);
+                // 即使超时，也返回当前状态
+                resolve();
+              }, maxWaitTime);
+              
+              // 添加事件监听器
+              session.once('waiting-for-input', waitHandler);
+              
+              // 添加错误处理
+              session.once('error', (err) => {
+                clearTimeout(timeoutId);
+                session.removeListener('waiting-for-input', waitHandler);
+                reject(err);
+              });
+              
+              // 添加关闭处理
+              session.once('close', () => {
+                clearTimeout(timeoutId);
+                session.removeListener('waiting-for-input', waitHandler);
+                resolve(); // 会话已关闭，直接返回
+              });
             });
+            
+            // 获取新输出
+            const newOutput = session.stdout.substring(beforeLength);
+            
+            log.info(`命令执行完成，等待输入状态: ${session.isWaitingForInput}, 新输出长度: ${newOutput.length}`);
             
             return {
               content: [{
                 type: "text",
                 text: JSON.stringify({
                   status: "success",
-                  new_output: stripAnsiCodes(newOutput.output),
-                  waiting_for_input: newOutput.waitingForInput
+                  new_output: stripAnsiCodes(newOutput),
+                  waiting_for_input: session.isWaitingForInput
                 })
               }]
             };
