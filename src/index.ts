@@ -83,7 +83,7 @@ function createServer() {
         },
         {
           name: "start_interactive_command",
-          description: "(需要交互式比如mysql -u root -p)在Kali Linux环境中启动一个交互式命令，并返回会话ID。交互式命令可以接收用户输入。",
+          description: "(需要交互式比如mysql -u root -p)在Kali Linux环境中启动一个交互式命令，并返回会话ID。交互式命令可以接收用户输入,可以在不close_interactive_command的情况下同时执行execute_command。",
           inputSchema: {
             type: "object",
             properties: {
