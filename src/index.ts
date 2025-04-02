@@ -69,7 +69,7 @@ function createServer() {
       tools: [
         {
           name: "execute_command",
-          description: "可与start_interactive_command和send_input_to_command交叉使用,(无需交互式比如ping 127.0.0.1)在Kali Linux渗透测试环境中执行命令。支持所有Kali Linux内置的安全测试工具和常规Linux命令。",
+          description: "(无需交互式比如ping 127.0.0.1)在Kali Linux渗透测试环境中执行命令。支持所有Kali Linux内置的安全测试工具和常规Linux命令。",
           inputSchema: {
             type: "object",
             properties: {
@@ -83,7 +83,7 @@ function createServer() {
         },
         {
           name: "start_interactive_command",
-          description: "可与execute_command和send_input_to_command交叉使用,(需要交互式比如mysql -u root -p)在Kali Linux环境中启动一个交互式命令，并返回会话ID。交互式命令可以接收用户输入。",
+          description: "(需要交互式比如mysql -u root -p)在Kali Linux环境中启动一个交互式命令，并返回会话ID。交互式命令可以接收用户输入。",
           inputSchema: {
             type: "object",
             properties: {
@@ -97,7 +97,7 @@ function createServer() {
         },
         {
           name: "send_input_to_command",
-          description: "可与execute_command和start_interactive_command交叉使用,(自行判断是AI输入还是用户手动输入)向正在运行的交互式命令发送用户输入。",
+          description: "(自行判断是AI输入还是用户手动输入)向正在运行的交互式命令发送用户输入。",
           inputSchema: {
             type: "object",
             properties: {
