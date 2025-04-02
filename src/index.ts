@@ -287,6 +287,12 @@ function createServer() {
           try {
             log.info(`向会话 ${sessionId} 发送输入: ${input}`);
             
+            // 检查当前命令是否包含msf且输入为exit
+            if ((global as any).currentInteractiveCommand.includes('msf') && input.trim() === 'exit') {
+              log.info(`检测到用户退出msfconsole命令`);
+              (global as any).currentInteractiveCommand = 'exit';
+            }
+            
             // 记录输入前的输出长度
             const beforeLength = session.stdout.length;
             
