@@ -31,19 +31,30 @@ configure_realtime_viewer action=enable
 ```
 
 ## 步骤3：执行命令并查看实时输出
-现在当您在Augment中执行交互式命令时，输出会实时显示在浏览器中：
+现在当您在Augment中执行命令时，输出会实时显示在浏览器中：
 
-### 示例1：网络扫描
+### 🎯 推荐：使用execute_command（更简单）
+```
+execute_command command="nmap -Pn -sS -sV 39.107.25.121"
+```
+
+```
+execute_command command="nikto -h http://example.com"
+```
+
+```
+execute_command command="hydra -l admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.100"
+```
+
+### 🔄 或者使用start_interactive_command（需要交互）
 ```
 start_interactive_command command="nmap -sS -p 1-1000 192.168.1.1"
 ```
 
-### 示例2：漏洞扫描
 ```
 start_interactive_command command="nikto -h http://example.com"
 ```
 
-### 示例3：密码破解
 ```
 start_interactive_command command="hydra -l admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.100"
 ```
@@ -106,7 +117,9 @@ configure_realtime_viewer action=configure viewer_url=http://localhost:8080
 ## 注意事项
 
 1. **必须先启动查看器**：MCP服务器需要查看器运行才能推送数据
-2. **仅对交互式命令有效**：只有通过 `start_interactive_command` 启动的命令才会推送输出
+2. **两种命令都支持实时推送**：
+   - `execute_command` - 自动启用实时推送，推荐使用
+   - `start_interactive_command` - 支持交互式输入，也有实时推送
 3. **本地使用**：默认只监听localhost，安全但仅限本机访问
 4. **会话管理**：可以同时监控多个命令会话
 5. **自动清理**：会话结束后会自动标记为完成状态
