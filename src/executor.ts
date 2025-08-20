@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { log } from './index.js';
 import { EventEmitter } from 'events';
 import { ClientChannel, ConnectConfig, ExecOptions } from 'ssh2';
+import { RealtimePusher, RealtimePusherConfig } from './realtime-pusher.js';
 
 /**
  * 移除ANSI转义序列和控制字符
@@ -164,8 +165,15 @@ export class CommandExecutor {
   private sshClient: ssh2.Client | null = null;
   public isConnected: boolean = false;
   private sessions: Map<string, InteractiveSession> = new Map();
-  
-  constructor() {}
+  private realtimePusher: RealtimePusher;
+
+  constructor(realtimePusherConfig?: RealtimePusherConfig) {
+    // 初始化实时推送器
+    this.realtimePusher = new RealtimePusher(realtimePusherConfig || {
+      viewerUrl: 'http://localhost:3000',
+      enabled: false // 默认禁用，可通过环境变量启用
+    });
+  }
 
   /**
    * 连接到SSH服务器
@@ -379,12 +387,15 @@ export class CommandExecutor {
       });
       
       log.info(`交互式会话创建成功，ID: ${sessionId}`);
-      
+
+      // 通知实时查看器会话开始
+      await this.realtimePusher.notifySessionStart(sessionId, command);
+
       // 如果需要等待提示符出现
       if (waitForPrompt) {
         return await this.waitForSessionPrompt(session, command, maxWaitTime);
       }
-      
+
       return session;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -532,7 +543,10 @@ export class CommandExecutor {
           }
           
           session.emit('output', cleanOutput);
-          
+
+          // 推送输出到实时查看器
+          self.realtimePusher.bufferAndPushOutput(sessionId, cleanOutput, false);
+
           // 立即检查是否等待输入
           const waiting = isWaitingForInput(session.stdout);
           if (waiting !== session.isWaitingForInput) {
@@ -564,6 +578,10 @@ export class CommandExecutor {
             clearTimeout(checkInputTimer);
           }
           self.sessions.delete(sessionId);  // 使用外部保存的this引用
+
+          // 通知实时查看器会话结束
+          self.realtimePusher.notifySessionEnd(sessionId);
+
           session.emit('close');
         });
         
@@ -679,18 +697,43 @@ export class CommandExecutor {
       log.info(`关闭会话: ${sessionId}`);
       session.close();
     }
-    
+
     if (this.sshClient) {
       log.info('断开SSH2客户端连接');
       this.sshClient.end();
       this.sshClient = null;
     }
-    
+
     if (this.isConnected) {
       log.info('断开NodeSSH连接');
       this.ssh.dispose();
       this.isConnected = false;
     }
+  }
+
+  /**
+   * 配置实时推送器
+   */
+  configureRealtimePusher(config: RealtimePusherConfig): void {
+    this.realtimePusher = new RealtimePusher(config);
+  }
+
+  /**
+   * 启用或禁用实时推送
+   */
+  setRealtimePushEnabled(enabled: boolean): void {
+    this.realtimePusher.setEnabled(enabled);
+  }
+
+  /**
+   * 获取实时推送器状态
+   */
+  getRealtimePusherStatus(): { enabled: boolean; activeSessionCount: number; config: RealtimePusherConfig } {
+    return {
+      enabled: this.realtimePusher.getConfig().enabled,
+      activeSessionCount: this.realtimePusher.getActiveSessionCount(),
+      config: this.realtimePusher.getConfig()
+    };
   }
 }
 

@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP实时命令输出查看器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background-color: #2d2d30;
+            padding: 1rem;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            color: #569cd6;
+            font-size: 1.5rem;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #f44747;
+        }
+
+        .status-indicator.connected {
+            background-color: #4ec9b0;
+        }
+
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 300px;
+            background-color: #252526;
+            border-right: 1px solid #3e3e42;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 1rem;
+            background-color: #2d2d30;
+            border-bottom: 1px solid #3e3e42;
+            font-weight: bold;
+        }
+
+        .session-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .session-item {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #3e3e42;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .session-item:hover {
+            background-color: #2a2d2e;
+        }
+
+        .session-item.active {
+            background-color: #094771;
+            border-left: 3px solid #007acc;
+        }
+
+        .session-id {
+            font-weight: bold;
+            color: #4ec9b0;
+            font-size: 0.9rem;
+        }
+
+        .session-command {
+            color: #ce9178;
+            font-size: 0.8rem;
+            margin-top: 0.25rem;
+            word-break: break-all;
+        }
+
+        .session-status {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 0.25rem;
+            font-size: 0.7rem;
+            color: #858585;
+        }
+
+        .session-active {
+            color: #4ec9b0;
+        }
+
+        .session-inactive {
+            color: #f44747;
+        }
+
+        .output-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #1e1e1e;
+        }
+
+        .output-header {
+            padding: 1rem;
+            background-color: #2d2d30;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .output-title {
+            font-weight: bold;
+            color: #569cd6;
+        }
+
+        .output-controls {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            padding: 0.25rem 0.75rem;
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: background-color 0.2s;
+        }
+
+        .btn:hover {
+            background-color: #1177bb;
+        }
+
+        .btn.secondary {
+            background-color: #5a5a5a;
+        }
+
+        .btn.secondary:hover {
+            background-color: #6a6a6a;
+        }
+
+        .output-content {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            background-color: #0d1117;
+        }
+
+        .no-session {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #858585;
+            font-style: italic;
+        }
+
+        .loading {
+            color: #f9c74f;
+        }
+
+        .error {
+            color: #f44747;
+        }
+
+        .success {
+            color: #4ec9b0;
+        }
+
+        .auto-scroll-indicator {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: #0e639c;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            opacity: 0.8;
+            transition: opacity 0.3s;
+        }
+
+        .auto-scroll-indicator.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #2d2d30;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #424242;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4a4a4a;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>MCP实时命令输出查看器</h1>
+        <div class="status">
+            <div class="status-indicator" id="connectionStatus"></div>
+            <span id="connectionText">连接中...</span>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="sidebar">
+            <div class="sidebar-header">活跃会话</div>
+            <div class="session-list" id="sessionList">
+                <div class="no-session">暂无活跃会话</div>
+            </div>
+        </div>
+
+        <div class="output-panel">
+            <div class="output-header">
+                <div class="output-title" id="outputTitle">选择一个会话查看输出</div>
+                <div class="output-controls">
+                    <button class="btn secondary" id="clearBtn" onclick="clearOutput()">清空</button>
+                    <button class="btn" id="autoScrollBtn" onclick="toggleAutoScroll()">自动滚动: 开</button>
+                </div>
+            </div>
+            <div class="output-content" id="outputContent">
+                <div class="no-session">请从左侧选择一个会话来查看实时输出</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="auto-scroll-indicator hidden" id="autoScrollIndicator">
+        自动滚动已启用
+    </div>
+
+    <script>
+        let ws = null;
+        let currentSessionId = null;
+        let sessions = new Map();
+        let autoScroll = true;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+
+        // DOM元素
+        const connectionStatus = document.getElementById('connectionStatus');
+        const connectionText = document.getElementById('connectionText');
+        const sessionList = document.getElementById('sessionList');
+        const outputTitle = document.getElementById('outputTitle');
+        const outputContent = document.getElementById('outputContent');
+        const autoScrollBtn = document.getElementById('autoScrollBtn');
+        const autoScrollIndicator = document.getElementById('autoScrollIndicator');
+
+        // 初始化WebSocket连接
+        function initWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}`;
+            
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function() {
+                console.log('WebSocket连接已建立');
+                connectionStatus.classList.add('connected');
+                connectionText.textContent = '已连接';
+                reconnectAttempts = 0;
+            };
+
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleWebSocketMessage(data);
+                } catch (error) {
+                    console.error('解析WebSocket消息失败:', error);
+                }
+            };
+
+            ws.onclose = function() {
+                console.log('WebSocket连接已关闭');
+                connectionStatus.classList.remove('connected');
+                connectionText.textContent = '连接断开';
+                
+                // 尝试重连
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    connectionText.textContent = `重连中... (${reconnectAttempts}/${maxReconnectAttempts})`;
+                    setTimeout(initWebSocket, 2000 * reconnectAttempts);
+                } else {
+                    connectionText.textContent = '连接失败';
+                }
+            };
+
+            ws.onerror = function(error) {
+                console.error('WebSocket错误:', error);
+            };
+        }
+
+        // 处理WebSocket消息
+        function handleWebSocketMessage(data) {
+            switch (data.type) {
+                case 'session_list':
+                    data.sessions.forEach(session => {
+                        sessions.set(session.sessionId, session);
+                    });
+                    updateSessionList();
+                    break;
+
+                case 'new_session':
+                    sessions.set(data.session.sessionId, {
+                        sessionId: data.session.sessionId,
+                        command: data.session.command,
+                        output: '',
+                        lastUpdate: data.session.lastUpdate,
+                        isActive: true
+                    });
+                    updateSessionList();
+                    break;
+
+                case 'session_output':
+                    if (sessions.has(data.sessionId)) {
+                        const session = sessions.get(data.sessionId);
+                        if (data.fullOutput !== undefined) {
+                            session.output = data.fullOutput;
+                        } else {
+                            session.output += data.output || '';
+                        }
+                        session.lastUpdate = data.lastUpdate;
+                        session.isActive = !data.isComplete;
+                        
+                        if (currentSessionId === data.sessionId) {
+                            updateOutputContent();
+                        }
+                        updateSessionList();
+                    }
+                    break;
+
+                case 'session_ended':
+                    if (sessions.has(data.sessionId)) {
+                        const session = sessions.get(data.sessionId);
+                        session.isActive = false;
+                        session.lastUpdate = data.lastUpdate;
+                        updateSessionList();
+                    }
+                    break;
+            }
+        }
+
+        // 更新会话列表
+        function updateSessionList() {
+            if (sessions.size === 0) {
+                sessionList.innerHTML = '<div class="no-session">暂无活跃会话</div>';
+                return;
+            }
+
+            const sessionArray = Array.from(sessions.values()).sort((a, b) => 
+                new Date(b.lastUpdate) - new Date(a.lastUpdate)
+            );
+
+            sessionList.innerHTML = sessionArray.map(session => `
+                <div class="session-item ${currentSessionId === session.sessionId ? 'active' : ''}" 
+                     onclick="selectSession('${session.sessionId}')">
+                    <div class="session-id">${session.sessionId}</div>
+                    <div class="session-command">${session.command || '未知命令'}</div>
+                    <div class="session-status">
+                        <span class="${session.isActive ? 'session-active' : 'session-inactive'}">
+                            ${session.isActive ? '运行中' : '已完成'}
+                        </span>
+                        <span>${new Date(session.lastUpdate).toLocaleTimeString()}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 选择会话
+        function selectSession(sessionId) {
+            if (currentSessionId === sessionId) return;
+
+            // 取消订阅当前会话
+            if (currentSessionId && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'unsubscribe_session',
+                    sessionId: currentSessionId
+                }));
+            }
+
+            currentSessionId = sessionId;
+            
+            // 订阅新会话
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'subscribe_session',
+                    sessionId: sessionId
+                }));
+            }
+
+            updateSessionList();
+            updateOutputContent();
+        }
+
+        // 更新输出内容
+        function updateOutputContent() {
+            if (!currentSessionId || !sessions.has(currentSessionId)) {
+                outputTitle.textContent = '选择一个会话查看输出';
+                outputContent.innerHTML = '<div class="no-session">请从左侧选择一个会话来查看实时输出</div>';
+                return;
+            }
+
+            const session = sessions.get(currentSessionId);
+            outputTitle.textContent = `会话: ${currentSessionId} - ${session.command || '未知命令'}`;
+            
+            const shouldScroll = autoScroll && (outputContent.scrollTop + outputContent.clientHeight >= outputContent.scrollHeight - 10);
+            
+            outputContent.textContent = session.output || '暂无输出...';
+            
+            if (shouldScroll) {
+                outputContent.scrollTop = outputContent.scrollHeight;
+            }
+        }
+
+        // 清空输出
+        function clearOutput() {
+            if (currentSessionId && sessions.has(currentSessionId)) {
+                sessions.get(currentSessionId).output = '';
+                updateOutputContent();
+            }
+        }
+
+        // 切换自动滚动
+        function toggleAutoScroll() {
+            autoScroll = !autoScroll;
+            autoScrollBtn.textContent = `自动滚动: ${autoScroll ? '开' : '关'}`;
+            autoScrollIndicator.classList.toggle('hidden', !autoScroll);
+            
+            if (autoScroll) {
+                outputContent.scrollTop = outputContent.scrollHeight;
+            }
+        }
+
+        // 监听滚动事件
+        outputContent.addEventListener('scroll', function() {
+            const isAtBottom = outputContent.scrollTop + outputContent.clientHeight >= outputContent.scrollHeight - 10;
+            if (!isAtBottom && autoScroll) {
+                autoScroll = false;
+                autoScrollBtn.textContent = '自动滚动: 关';
+                autoScrollIndicator.classList.add('hidden');
+            }
+        });
+
+        // 初始化
+        initWebSocket();
+    </script>
+</body>
+</html>

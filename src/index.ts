@@ -42,7 +42,13 @@ const KALI_CONFIG = {
   privateKeyPath: "C:\\Users\\hack004\\.ssh\\kali000" // 私钥文件路径
 };
 
-const commandExecutor = new CommandExecutor();
+// 实时推送配置
+const realtimePusherConfig = {
+  viewerUrl: process.env.REALTIME_VIEWER_URL || 'http://localhost:3000',
+  enabled: process.env.REALTIME_PUSH_ENABLED === 'true' || false
+};
+
+const commandExecutor = new CommandExecutor(realtimePusherConfig);
 
 // 存储活跃的交互式会话
 const activeSessions: Map<string, InteractiveSession> = new Map();
@@ -135,7 +141,7 @@ function createServer() {
           name: "close_interactive_command",
           description: "关闭交互式命令会话。",
           inputSchema: {
-            type: "object", 
+            type: "object",
             properties: {
               session_id: {
                 type: "string",
@@ -143,6 +149,25 @@ function createServer() {
               }
             },
             required: ["session_id"]
+          }
+        },
+        {
+          name: "configure_realtime_viewer",
+          description: "配置实时命令输出查看器。可以启用/禁用实时推送功能，或查看当前状态。",
+          inputSchema: {
+            type: "object",
+            properties: {
+              action: {
+                type: "string",
+                enum: ["enable", "disable", "status", "configure"],
+                description: "操作类型：enable(启用), disable(禁用), status(查看状态), configure(配置)"
+              },
+              viewer_url: {
+                type: "string",
+                description: "实时查看器的URL地址，仅在action为configure时需要"
+              }
+            },
+            required: ["action"]
           }
         }
       ]
@@ -458,7 +483,94 @@ function createServer() {
             );
           }
         }
-        
+
+        // 配置实时查看器
+        case "configure_realtime_viewer": {
+          const action = String(request.params.arguments?.action);
+          const viewerUrl = request.params.arguments?.viewer_url;
+
+          if (!action) {
+            throw new McpError(ErrorCode.InvalidParams, "操作类型是必需的");
+          }
+
+          try {
+            switch (action) {
+              case "enable":
+                commandExecutor.setRealtimePushEnabled(true);
+                log.info("实时推送已启用");
+                return {
+                  content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                      status: "success",
+                      message: "实时推送已启用",
+                      config: commandExecutor.getRealtimePusherStatus()
+                    })
+                  }]
+                };
+
+              case "disable":
+                commandExecutor.setRealtimePushEnabled(false);
+                log.info("实时推送已禁用");
+                return {
+                  content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                      status: "success",
+                      message: "实时推送已禁用",
+                      config: commandExecutor.getRealtimePusherStatus()
+                    })
+                  }]
+                };
+
+              case "status":
+                const status = commandExecutor.getRealtimePusherStatus();
+                return {
+                  content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                      status: "success",
+                      enabled: status.enabled,
+                      activeSessionCount: status.activeSessionCount,
+                      viewerUrl: status.config.viewerUrl,
+                      message: `实时推送${status.enabled ? '已启用' : '已禁用'}，活跃会话数: ${status.activeSessionCount}`
+                    })
+                  }]
+                };
+
+              case "configure":
+                if (!viewerUrl) {
+                  throw new McpError(ErrorCode.InvalidParams, "配置操作需要提供viewer_url参数");
+                }
+                commandExecutor.configureRealtimePusher({
+                  viewerUrl: String(viewerUrl),
+                  enabled: true
+                });
+                log.info(`实时查看器URL已配置为: ${viewerUrl}`);
+                return {
+                  content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                      status: "success",
+                      message: `实时查看器已配置并启用`,
+                      config: commandExecutor.getRealtimePusherStatus()
+                    })
+                  }]
+                };
+
+              default:
+                throw new McpError(ErrorCode.InvalidParams, `未知操作类型: ${action}`);
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            log.error(`配置实时查看器失败: ${errorMessage}`);
+            throw new McpError(
+              ErrorCode.InternalError,
+              `无法配置实时查看器: ${errorMessage}`
+            );
+          }
+        }
+
         default:
           throw new McpError(ErrorCode.MethodNotFound, "未知工具");
       }

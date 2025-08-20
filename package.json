@@ -20,7 +20,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0",
     "node-ssh": "^13.2.1",
-    "ssh2": "^1.16.0"
+    "ssh2": "^1.16.0",
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.24",
