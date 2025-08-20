@@ -10,27 +10,8 @@ cd realtime-viewer
 npm start
 ```
 
-## 步骤2：在Augment中启用实时推送
-在Augment的对话中输入以下命令：
-
-```
-configure_realtime_viewer action=enable
-```
-
-您会看到类似这样的响应：
-```json
-{
-  "status": "success",
-  "message": "实时推送已启用",
-  "config": {
-    "enabled": true,
-    "activeSessionCount": 0,
-    "viewerUrl": "http://localhost:3000"
-  }
-}
-```
-
-## 步骤3：执行命令并查看实时输出
+## 步骤2：执行命令并查看实时输出
+🎉 **实时推送已默认启用！** 无需额外配置，直接执行命令即可。
 现在当您在Augment中执行命令时，输出会实时显示在浏览器中：
 
 ### 🎯 推荐：使用execute_command（更简单）
@@ -65,44 +46,28 @@ start_interactive_command command="hydra -l admin -P /usr/share/wordlists/rockyo
 3. 点击会话查看实时输出
 4. 输出会自动滚动显示最新内容
 
-## 常用MCP命令
+## 环境变量配置（可选）
 
-### 查看实时推送状态
+如果需要自定义查看器URL，可以设置环境变量：
+```bash
+set REALTIME_VIEWER_URL=http://localhost:8080
 ```
-configure_realtime_viewer action=status
-```
-
-### 禁用实时推送
-```
-configure_realtime_viewer action=disable
-```
-
-### 重新启用实时推送
-```
-configure_realtime_viewer action=enable
-```
-
-### 配置自定义查看器URL（如果使用不同端口）
-```
-configure_realtime_viewer action=configure viewer_url=http://localhost:8080
-```
+然后重新启动MCP服务器。
 
 ## 工作流程示例
 
 1. **启动查看器**：运行 `start-realtime-viewer.bat`
 2. **打开浏览器**：访问 http://localhost:3000
-3. **在Augment中启用**：`configure_realtime_viewer action=enable`
-4. **执行命令**：`start_interactive_command command="你的命令"`
-5. **实时监控**：在浏览器中查看输出进度
-6. **继续交互**：使用 `send_input_to_command` 发送输入
-7. **结束会话**：使用 `close_interactive_command` 或命令自然结束
+3. **直接执行命令**：`execute_command command="你的命令"`
+4. **实时监控**：在浏览器中查看输出进度
+5. **继续执行**：所有命令都会自动显示实时输出
 
 ## 故障排除
 
 ### 问题1：实时推送不工作
 - 确认查看器正在运行（http://localhost:3000 可访问）
-- 检查是否已启用：`configure_realtime_viewer action=status`
-- 重新启用：`configure_realtime_viewer action=enable`
+- 重新构建MCP服务器：`npm run build`
+- 重启Augment中的MCP连接
 
 ### 问题2：端口冲突
 - 修改查看器端口：在 `realtime-viewer/server.js` 中修改 PORT
@@ -117,9 +82,10 @@ configure_realtime_viewer action=configure viewer_url=http://localhost:8080
 ## 注意事项
 
 1. **必须先启动查看器**：MCP服务器需要查看器运行才能推送数据
-2. **两种命令都支持实时推送**：
-   - `execute_command` - 自动启用实时推送，推荐使用
-   - `start_interactive_command` - 支持交互式输入，也有实时推送
-3. **本地使用**：默认只监听localhost，安全但仅限本机访问
-4. **会话管理**：可以同时监控多个命令会话
-5. **自动清理**：会话结束后会自动标记为完成状态
+2. **实时推送默认启用**：无需手动配置，所有命令都支持实时推送
+3. **两种命令都支持**：
+   - `execute_command` - 推荐使用，自动管理会话
+   - `start_interactive_command` - 支持交互式输入
+4. **本地使用**：默认只监听localhost，安全但仅限本机访问
+5. **会话管理**：可以同时监控多个命令会话
+6. **自动清理**：会话结束后会自动标记为完成状态
