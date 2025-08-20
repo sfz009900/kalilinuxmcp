@@ -202,10 +202,11 @@ function createServer() {
           try {
             log.info(`准备执行命令: ${command}`);
             
-            // 执行命令
+            // 执行命令，启用实时推送
             const result = await commandExecutor.executeCommand(command, {
               timeout: timeout,
-              env: env as Record<string, string>
+              env: env as Record<string, string>,
+              enableRealtime: true
             });
             
             log.info("命令执行成功");

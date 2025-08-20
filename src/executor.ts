@@ -258,14 +258,20 @@ export class CommandExecutor {
       timeout?: number; // 命令执行超时时间(毫秒)
       cwd?: string; // 工作目录
       env?: Record<string, string>; // 环境变量
+      enableRealtime?: boolean; // 是否启用实时推送
     } = {}
   ): Promise<{ stdout: string; stderr: string }> {
-    const { timeout = 30000000, cwd = '/', env = {} } = options;
+    const { timeout = 30000000, cwd = '/', env = {}, enableRealtime = false } = options;
     
     if (!this.isConnected) {
       throw new Error('SSH未连接，请先调用connect方法');
     }
-    
+
+    // 如果启用实时推送，使用实时执行方法
+    if (enableRealtime) {
+      return await this.executeCommandWithRealtime(command, { timeout, cwd, env });
+    }
+
     try {
       log.info(`执行命令: ${command}`);
       log.debug(`命令超时: ${timeout}ms, 工作目录: ${cwd}`);
@@ -305,6 +311,129 @@ export class CommandExecutor {
         return { stdout: '命令执行时间过长，已被中断', stderr: '命令执行超时' };
       }
       
+      throw error;
+    }
+  }
+
+  /**
+   * 执行命令并支持实时输出推送
+   */
+  async executeCommandWithRealtime(
+    command: string,
+    options: {
+      timeout?: number;
+      cwd?: string;
+      env?: Record<string, string>;
+    } = {}
+  ): Promise<{ stdout: string; stderr: string }> {
+    const { timeout = 30000000, cwd = '/', env = {} } = options;
+
+    if (!this.isConnected || !this.sshClient) {
+      throw new Error('SSH未连接，请先调用connect方法');
+    }
+
+    const sessionId = `exec_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+
+    try {
+      log.info(`执行实时命令: ${command}`);
+
+      // 通知实时查看器会话开始
+      await this.realtimePusher.notifySessionStart(sessionId, command);
+
+      // 构建完整命令
+      let execCommand = command;
+      if (Object.keys(env).length > 0) {
+        const envSetup = Object.entries(env)
+          .map(([key, value]) => `export ${key}="${String(value).replace(/"/g, '\\"')}"`)
+          .join(' && ');
+        execCommand = `cd "${cwd}" && ${envSetup} && ${command}`;
+      } else {
+        execCommand = `cd "${cwd}" && ${command}`;
+      }
+
+      return new Promise((resolve, reject) => {
+        let stdout = '';
+        let stderr = '';
+        let isCompleted = false;
+
+        // 设置超时
+        const timeoutId = setTimeout(() => {
+          if (!isCompleted) {
+            isCompleted = true;
+            this.realtimePusher.notifySessionEnd(sessionId);
+            reject(new Error('命令执行超时'));
+          }
+        }, timeout);
+
+        // 执行命令
+        this.sshClient!.exec(execCommand, (err, stream) => {
+          if (err) {
+            clearTimeout(timeoutId);
+            isCompleted = true;
+            this.realtimePusher.notifySessionEnd(sessionId);
+            reject(err);
+            return;
+          }
+
+          // 处理标准输出
+          stream.on('data', (data: Buffer) => {
+            const output = data.toString();
+            const cleanOutput = stripAnsiCodes(output);
+            stdout += cleanOutput;
+
+            // 实时推送输出
+            this.realtimePusher.bufferAndPushOutput(sessionId, cleanOutput, false);
+
+            log.debug(`[${sessionId}] stdout: ${cleanOutput.substring(0, 100)}${cleanOutput.length > 100 ? '...' : ''}`);
+          });
+
+          // 处理错误输出
+          stream.stderr.on('data', (data: Buffer) => {
+            const error = data.toString();
+            const cleanError = stripAnsiCodes(error);
+            stderr += cleanError;
+
+            // 实时推送错误输出
+            this.realtimePusher.bufferAndPushOutput(sessionId, `[STDERR] ${cleanError}`, false);
+
+            log.debug(`[${sessionId}] stderr: ${cleanError.substring(0, 100)}${cleanError.length > 100 ? '...' : ''}`);
+          });
+
+          // 命令执行完成
+          stream.on('close', (code: number) => {
+            clearTimeout(timeoutId);
+            if (!isCompleted) {
+              isCompleted = true;
+
+              // 发送最终完成通知
+              this.realtimePusher.bufferAndPushOutput(sessionId, `\n[命令执行完成，退出码: ${code}]`, true);
+              this.realtimePusher.notifySessionEnd(sessionId);
+
+              log.info(`[${sessionId}] 命令执行完成，退出码: ${code}`);
+
+              resolve({
+                stdout: stdout,
+                stderr: stderr
+              });
+            }
+          });
+
+          // 处理错误
+          stream.on('error', (error: Error) => {
+            clearTimeout(timeoutId);
+            if (!isCompleted) {
+              isCompleted = true;
+              this.realtimePusher.notifySessionEnd(sessionId);
+              log.error(`[${sessionId}] 流错误: ${error.message}`);
+              reject(error);
+            }
+          });
+        });
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error(`实时命令执行失败: ${errorMessage}`);
+      await this.realtimePusher.notifySessionEnd(sessionId);
       throw error;
     }
   }
