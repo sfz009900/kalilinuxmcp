@@ -21,7 +21,10 @@ export class RealtimePusher {
 
     try {
       this.activeSessions.add(sessionId);
-      
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
       const response = await fetch(`${this.config.viewerUrl}/api/session/start`, {
         method: 'POST',
         headers: {
@@ -31,8 +34,10 @@ export class RealtimePusher {
           sessionId,
           command
         }),
-        timeout: 5000 // 5秒超时
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         console.warn(`通知查看器会话开始失败: ${response.status} ${response.statusText}`);
@@ -51,6 +56,9 @@ export class RealtimePusher {
     if (!this.config.enabled || !this.activeSessions.has(sessionId)) return;
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
       const response = await fetch(`${this.config.viewerUrl}/api/session/output`, {
         method: 'POST',
         headers: {
@@ -61,8 +69,10 @@ export class RealtimePusher {
           output,
           isComplete
         }),
-        timeout: 5000 // 5秒超时
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         console.warn(`推送输出到查看器失败: ${response.status} ${response.statusText}`);
@@ -79,6 +89,9 @@ export class RealtimePusher {
     if (!this.config.enabled) return;
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
       const response = await fetch(`${this.config.viewerUrl}/api/session/end`, {
         method: 'POST',
         headers: {
@@ -87,8 +100,10 @@ export class RealtimePusher {
         body: JSON.stringify({
           sessionId
         }),
-        timeout: 5000 // 5秒超时
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         console.warn(`通知查看器会话结束失败: ${response.status} ${response.statusText}`);
@@ -160,10 +175,15 @@ export class RealtimePusher {
     if (!this.config.enabled) return false;
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
       const response = await fetch(`${this.config.viewerUrl}/api/sessions`, {
         method: 'GET',
-        timeout: 3000 // 3秒超时
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
       return response.ok;
     } catch (error) {
       console.warn('查看器健康检查失败:', error);
